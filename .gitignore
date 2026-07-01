@@ -1,0 +1,40 @@
+# Dependencies
+/vendor/
+composer.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Storage (runtime data)
+/storage/logs/*
+/storage/cache/*
+/storage/backups/*
+/storage/migrations/*
+!/storage/logs/.gitkeep
+!/storage/cache/.gitkeep
+!/storage/backups/.gitkeep
+!/storage/migrations/.gitkeep
+
+# Environment
+.env
+.env.local
+.env.production
+
+# PHP
+*.phar
+phpunit.xml
+phpunit.xml.dist
+
+# Temp files
+*.tmp
+*.bak
+*.old

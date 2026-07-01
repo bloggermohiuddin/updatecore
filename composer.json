@@ -1,0 +1,28 @@
+{
+    "name": "updatecore/framework",
+    "version": "1.0.0",
+    "description": "Lightweight, production-grade reusable PHP update framework",
+    "type": "library",
+    "license": "MIT",
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Updater\\": "src/"
+        },
+        "files": [
+            "src/Support/Helpers.php",
+            "bootstrap.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Updater\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
