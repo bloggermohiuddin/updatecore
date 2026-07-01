@@ -268,7 +268,7 @@ class Installer
             }
 
             $parser = new \Updater\Manifest\ManifestParser($this->config, $this->logger);
-            if (!$parser->verifyDownloadedContent($content, $file['hash'], $file['size'] ?? 0)) {
+            if (!$parser->verifyDownloadedContent($content, $file['hash'], strlen($content))) {
                 $this->logger->error("File integrity check failed, skipping", ['path' => $file['path']]);
                 $failed[] = $file['path'];
                 continue;
