@@ -237,18 +237,6 @@ class Updater
         return $this->cache;
     }
 
-    public function setChannel(string $channel): self
-    {
-        $this->config->set('channel', $channel);
-        $this->cache->clear();
-        return $this;
-    }
-
-    public function getChannel(): string
-    {
-        return $this->config->get('channel', 'stable');
-    }
-
     public function clearCache(): self
     {
         $this->cache->clear();
@@ -265,7 +253,6 @@ class Updater
             'backups'        => $this->getBackups(),
             'migration_status' => $this->getMigrationStatus(),
             'progress'       => $this->getProgress(),
-            'channel'        => $this->getChannel(),
         ];
     }
 }

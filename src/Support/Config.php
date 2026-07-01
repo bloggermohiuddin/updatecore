@@ -12,7 +12,6 @@ class Config
 
     private array $defaults = [
         'provider'       => 'github',
-        'channel'        => 'stable',
         'repository'     => '',
         'branch'         => 'main',
         'token'          => '',
@@ -22,10 +21,7 @@ class Config
         'storage_path'   => '',
         'backup_enabled' => true,
         'backup_max'     => 10,
-        'verify_signatures' => true,
-        'signature_key'  => '',
         'timeout'        => 60,
-        'channels'       => ['stable', 'beta', 'dev', 'nightly'],
     ];
 
     private function __construct(array $config = [])
@@ -94,8 +90,4 @@ class Config
         return $path;
     }
 
-    public function getChannelPath(): string
-    {
-        return $this->data['channel'];
-    }
 }

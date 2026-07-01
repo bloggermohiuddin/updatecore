@@ -82,9 +82,8 @@ class Installer
 
         try {
             $provider = $this->createProvider();
-            $channel = $this->config->get('channel', 'stable');
 
-            $manifestJson = $provider->fetchPackageManifest($packageName, $channel);
+            $manifestJson = $provider->fetchPackageManifest($packageName);
             $manifestData = json_decode($manifestJson, true, 512, JSON_THROW_ON_ERROR);
 
             $parser = new ManifestParser($this->config, $this->logger);
@@ -98,7 +97,7 @@ class Installer
                 $percent = (int) (($current / max($totalFiles, 1)) * 100);
                 $this->setProgress('downloading_package', "Installing {$file['path']}", $percent, $totalFiles);
 
-                $tempContent = $this->fetchFileContent($provider, $packageName, $file['path'], $channel);
+                $tempContent = $this->fetchFileContent($provider, $packageName, $file['path']);
 
                 if ($tempContent === null) {
                     throw new \RuntimeException("Failed to download package file: {$file['path']}");
@@ -226,7 +225,6 @@ class Installer
         $this->logger->info("Downloading " . count($changedFiles) . " changed files");
 
         $provider = $this->createProvider();
-        $channel = $checkResult['channel'] ?? $this->config->get('channel', 'stable');
 
         $total = count($changedFiles);
         $current = 0;
@@ -239,7 +237,7 @@ class Installer
 
             $this->logger->info("Downloading file", ['path' => $file['path']]);
 
-            $content = $this->fetchFileContentFromProvider($provider, $file['path'], $channel);
+            $content = $this->fetchFileContentFromProvider($provider, $file['path']);
 
             if ($content === null) {
                 $this->logger->error("Failed to download file", ['path' => $file['path']]);
@@ -330,7 +328,6 @@ class Installer
         $versionManager = new \Updater\Managers\VersionManager($this->config, $this->logger);
 
         $versionManager->setLocalVersion($checkResult['remote'], [
-            'channel'      => $checkResult['channel'] ?? 'stable',
             'release_date' => $checkResult['release_date'] ?? null,
             'files_updated'=> count($this->installedFiles),
         ]);
@@ -338,20 +335,19 @@ class Installer
         $versionManager->addToHistory([
             'from'         => $checkResult['local'],
             'to'           => $checkResult['remote'],
-            'channel'      => $checkResult['channel'] ?? 'stable',
             'files_count'  => count($this->installedFiles),
         ]);
 
         $this->setProgress('finalizing', 'Version updated', 98);
     }
 
-    private function fetchFileContentFromProvider(GitHubProvider|ApiProvider $provider, string $path, string $channel): ?string
+    private function fetchFileContentFromProvider(GitHubProvider|ApiProvider $provider, string $path): ?string
     {
         $tempDir = sys_get_temp_dir() . '/updater_' . uniqid('', true);
         updater_ensure_directory($tempDir);
         $tempFile = $tempDir . '/' . basename($path);
 
-        $success = $provider->downloadFile($path, $tempFile, $channel);
+        $success = $provider->downloadFile($path, $tempFile);
 
         if (!$success || !file_exists($tempFile)) {
             return null;
@@ -364,14 +360,14 @@ class Installer
         return $content;
     }
 
-    private function fetchFileContent(GitHubProvider|ApiProvider $provider, string $packageName, string $path, string $channel): ?string
+    private function fetchFileContent(GitHubProvider|ApiProvider $provider, string $packageName, string $path): ?string
     {
         if ($provider instanceof ApiProvider) {
             $tempDir = sys_get_temp_dir() . '/updater_pkg_' . uniqid('', true);
             updater_ensure_directory($tempDir);
             $tempFile = $tempDir . '/' . basename($path);
 
-            $success = $provider->downloadPackageFile($packageName, $path, $tempFile, $channel);
+            $success = $provider->downloadPackageFile($packageName, $path, $tempFile);
 
             if (!$success || !file_exists($tempFile)) {
                 return null;

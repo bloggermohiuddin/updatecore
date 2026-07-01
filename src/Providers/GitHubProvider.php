@@ -21,9 +21,8 @@ class GitHubProvider
         $this->logger = $logger ?? new Logger($this->config);
     }
 
-    public function fetchManifest(string $channel = ''): string
+    public function fetchManifest(): string
     {
-        $channel = $channel ?: $this->config->get('channel', 'stable');
         $repo = $this->config->get('repository', '');
         $token = $this->config->get('token', '');
 
@@ -31,12 +30,9 @@ class GitHubProvider
             throw new \RuntimeException('GitHub repository not configured');
         }
 
-        $this->logger->info("Fetching manifest from GitHub", [
-            'repo'    => $repo,
-            'channel' => $channel,
-        ]);
+        $this->logger->info("Fetching manifest from GitHub", ['repo' => $repo]);
 
-        $url = "{$this->apiBase}/repos/{$repo}/contents/{$channel}/update.json";
+        $url = "{$this->apiBase}/repos/{$repo}/contents/update.json";
 
         $headers = [
             'http' => [
@@ -72,13 +68,12 @@ class GitHubProvider
         return is_string($response) ? $response : $response;
     }
 
-    public function downloadFile(string $remotePath, string $localPath, string $channel = ''): bool
+    public function downloadFile(string $remotePath, string $localPath): bool
     {
-        $channel = $channel ?: $this->config->get('channel', 'stable');
         $repo = $this->config->get('repository', '');
         $token = $this->config->get('token', '');
 
-        $url = "{$this->apiBase}/repos/{$repo}/contents/{$channel}/files/{$remotePath}";
+        $url = "{$this->apiBase}/repos/{$repo}/contents/files/{$remotePath}";
 
         $headers = [
             'http' => [
@@ -120,12 +115,12 @@ class GitHubProvider
         return true;
     }
 
-    public function downloadArchive(string $channel, string $version, string $destPath): bool
+    public function downloadArchive(string $ref, string $version, string $destPath): bool
     {
         $repo = $this->config->get('repository', '');
         $token = $this->config->get('token', '');
 
-        $url = "{$this->apiBase}/repos/{$repo}/zipball/{$channel}";
+        $url = "{$this->apiBase}/repos/{$repo}/zipball/{$ref}";
 
         $headers = [
             'http' => [

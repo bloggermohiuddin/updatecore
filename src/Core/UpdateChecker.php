@@ -96,7 +96,6 @@ class UpdateChecker
             'available'      => true,
             'local'          => $localVersion,
             'remote'         => $remoteVersion,
-            'channel'        => $remoteManifest['channel'] ?? 'stable',
             'release_date'   => $remoteManifest['release_date'] ?? null,
             'changed_files'  => $changedFiles,
             'deleted_files'  => $deletedFiles,
@@ -116,9 +115,8 @@ class UpdateChecker
         }
 
         $provider = $this->createProvider();
-        $channel = $this->config->get('channel', 'stable');
 
-        $jsonContent = $provider->fetchManifest($channel);
+        $jsonContent = $provider->fetchManifest();
         $manifest = $this->manifestParser->parse($jsonContent);
 
         $this->cache->set('remote_manifest', $manifest, 300);

@@ -18,9 +18,8 @@ class ApiProvider
         $this->logger = $logger ?? new Logger($this->config);
     }
 
-    public function fetchManifest(string $channel = ''): string
+    public function fetchManifest(): string
     {
-        $channel = $channel ?: $this->config->get('channel', 'stable');
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
         $apiToken = $this->config->get('api_token', '');
 
@@ -28,12 +27,9 @@ class ApiProvider
             throw new \RuntimeException('API URL not configured');
         }
 
-        $url = "{$apiUrl}/{$channel}/update.json";
+        $url = "{$apiUrl}/update.json";
 
-        $this->logger->info("Fetching manifest from API", [
-            'url'     => $url,
-            'channel' => $channel,
-        ]);
+        $this->logger->info("Fetching manifest from API", ['url' => $url]);
 
         $headers = [
             'http' => [
@@ -69,13 +65,12 @@ class ApiProvider
         return json_encode($decoded, JSON_THROW_ON_ERROR);
     }
 
-    public function downloadFile(string $remotePath, string $localPath, string $channel = ''): bool
+    public function downloadFile(string $remotePath, string $localPath): bool
     {
-        $channel = $channel ?: $this->config->get('channel', 'stable');
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
         $apiToken = $this->config->get('api_token', '');
 
-        $url = "{$apiUrl}/{$channel}/files/{$remotePath}";
+        $url = "{$apiUrl}/files/{$remotePath}";
 
         $this->logger->info("Downloading file from API", ['path' => $remotePath]);
 
@@ -119,13 +114,12 @@ class ApiProvider
         return true;
     }
 
-    public function fetchPackageManifest(string $packageName, string $channel = ''): string
+    public function fetchPackageManifest(string $packageName): string
     {
-        $channel = $channel ?: $this->config->get('channel', 'stable');
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
         $apiToken = $this->config->get('api_token', '');
 
-        $url = "{$apiUrl}/packages/{$channel}/{$packageName}/update.json";
+        $url = "{$apiUrl}/packages/{$packageName}/update.json";
 
         $headers = [
             'http' => [
@@ -149,13 +143,12 @@ class ApiProvider
         return $response;
     }
 
-    public function downloadPackageFile(string $packageName, string $remotePath, string $localPath, string $channel = ''): bool
+    public function downloadPackageFile(string $packageName, string $remotePath, string $localPath): bool
     {
-        $channel = $channel ?: $this->config->get('channel', 'stable');
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
         $apiToken = $this->config->get('api_token', '');
 
-        $url = "{$apiUrl}/packages/{$channel}/{$packageName}/files/{$remotePath}";
+        $url = "{$apiUrl}/packages/{$packageName}/files/{$remotePath}";
 
         $headers = [
             'http' => [

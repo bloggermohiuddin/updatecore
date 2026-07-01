@@ -97,7 +97,6 @@ Application starts
 - **Database Migrations** — Run SQL or PHP migration files as part of the update process
 - **GitHub Provider** — Pull manifests and files directly from GitHub repository releases
 - **Custom API Provider** — Connect to any REST API endpoint hosting your update artifacts
-- **Update Channels** — Support for `stable`, `beta`, `dev`, and `nightly` release channels
 - **Package Management** — Install, update, and remove modular packages and plugins
 - **Progress Tracking** — Real-time progress data for future web dashboards and CLI tools
 - **Structured Logging** — Every operation is logged with timestamps, levels, and context
@@ -118,7 +117,6 @@ Application starts
 | Pre-update backups | ✅ | ❌ | ⚠️ Manual |
 | Database migrations | ✅ | ❌ | ⚠️ Manual |
 | Multiple providers | ✅ | ❌ | ❌ |
-| Update channels | ✅ | ❌ | ❌ |
 | Package management | ✅ | ❌ | ❌ |
 | Progress tracking | ✅ | ❌ | ❌ |
 | Framework independent | ✅ | ✅ | ✅ |
@@ -153,7 +151,6 @@ $updater = Updater::make([
     'provider'   => 'github',
     'repository' => 'your-username/your-repo',
     'token'      => 'ghp_your_personal_access_token',
-    'channel'    => 'stable',
 ]);
 ```
 
@@ -201,7 +198,6 @@ Updater::make($config)->update();
 | `token` | `string` | `''` | GitHub personal access token for private repos |
 | `api_url` | `string` | `''` | Base URL for custom API provider |
 | `api_token` | `string` | `''` | Authentication token for custom API |
-| `channel` | `string` | `'stable'` | Release channel (`stable`, `beta`, `dev`, `nightly`) |
 | `base_path` | `string` | auto-detected | Root path of the application being updated |
 | `storage_path` | `string` | auto-detected | Path for logs, backups, and cache |
 | `backup_enabled` | `bool` | `true` | Enable or disable automatic backups |
@@ -216,7 +212,6 @@ $updater = Updater::make([
     'provider'       => 'github',
     'repository'     => 'myorg/myapp',
     'token'          => getenv('UPDATE_TOKEN'),
-    'channel'        => 'stable',
     'backup_enabled' => true,
 ]);
 
@@ -224,7 +219,6 @@ $updater = Updater::make([
 $updater = Updater::make([
     'provider'       => 'github',
     'repository'     => 'myorg/myapp',
-    'channel'        => 'dev',
     'backup_enabled' => false,
 ]);
 ```
@@ -233,14 +227,13 @@ $updater = Updater::make([
 
 ## Update Manifest Format
 
-The remote server hosts `update.json` files organized by channel. The manifest defines everything about a release.
+The remote server hosts a single `update.json` file at the root.
 
 ### Manifest Structure
 
 ```json
 {
     "version": "2.1.0",
-    "channel": "stable",
     "release_date": "2026-07-01",
 
     "files": [
@@ -272,7 +265,6 @@ The remote server hosts `update.json` files organized by channel. The manifest d
 | Field | Type | Required | Description |
 | :--- | :--- | :---: | :--- |
 | `version` | `string` | ✅ | Semantic version number (e.g., `2.1.0`) |
-| `channel` | `string` | ✅ | Release channel (`stable`, `beta`, `dev`, `nightly`) |
 | `release_date` | `string` | ❌ | ISO 8601 date of the release |
 | `files` | `array` | ✅ | Array of files included in this release |
 | `files[].path` | `string` | ✅ | Relative path to the file from project root |
@@ -296,33 +288,25 @@ $updater = Updater::make([
     'provider'   => 'github',
     'repository' => 'your-username/your-repo',
     'token'      => 'ghp_xxxxxxxxxxxxxxxxxxxx',
-    'channel'    => 'stable',
 ]);
 ```
 
 **How it works:**
 
-- Fetches `update.json` from `{repository}/contents/{channel}/update.json`
-- Downloads individual files from `{repository}/contents/{channel}/files/{path}`
+- Fetches `update.json` from `{repository}/contents/update.json`
+- Downloads individual files from `{repository}/contents/files/{path}`
 - Supports public and private repositories via token authentication
 
 **Remote file structure:**
 
 ```
 your-repo/
-├── stable/
-│   ├── update.json
-│   └── files/
-│       ├── app/
-│       │   └── User.php
-│       └── config/
-│           └── database.php
-├── beta/
-│   ├── update.json
-│   └── files/
-└── dev/
-    ├── update.json
-    └── files/
+├── update.json
+└── files/
+    ├── app/
+    │   └── User.php
+    └── config/
+        └── database.php
 ```
 
 ### Custom API Provider
@@ -334,7 +318,6 @@ $updater = Updater::make([
     'provider'   => 'api',
     'api_url'    => 'https://updates.yourapp.com',
     'api_token'  => 'your-api-token',
-    'channel'    => 'stable',
 ]);
 ```
 
@@ -342,10 +325,10 @@ $updater = Updater::make([
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/{channel}/update.json` | GET | Fetch update manifest |
-| `/{channel}/files/{path}` | GET | Download individual file |
-| `/packages/{channel}/{name}/update.json` | GET | Fetch package manifest |
-| `/packages/{channel}/{name}/files/{path}` | GET | Download package file |
+| `/update.json` | GET | Fetch update manifest |
+| `/files/{path}` | GET | Download individual file |
+| `/packages/{name}/update.json` | GET | Fetch package manifest |
+| `/packages/{name}/files/{path}` | GET | Download package file |
 | `/health` | GET | Connection health check |
 
 ---
@@ -389,7 +372,6 @@ try {
     $updater->update();
 } catch (\Exception $e) {
     // Rollback already executed automatically
-    // Previous files and version are restored
     echo "Update failed and was rolled back: " . $e->getMessage();
 }
 ```
@@ -512,43 +494,16 @@ foreach ($recentLogs as $line) {
 
 ---
 
-## Update Channels
+## Versioning
 
-UpdateCore supports multiple release channels for managing different stages of your release pipeline.
+UpdateCore follows [Semantic Versioning](https://semver.org/):
 
-### Available Channels
-
-| Channel | Purpose | Stability |
+| Version | Stage | Description |
 | :--- | :--- | :--- |
-| `stable` | Production releases | Highest |
-| `beta` | Pre-release testing | High |
-| `dev` | Development builds | Medium |
-| `nightly` | Automated daily builds | Low |
-
-### Switching Channels
-
-```php
-$updater->setChannel('beta');
-$result = $updater->check();
-```
-
-### Remote Directory Structure
-
-```
-your-update-server/
-├── stable/
-│   ├── update.json
-│   └── files/
-├── beta/
-│   ├── update.json
-│   └── files/
-├── dev/
-│   ├── update.json
-│   └── files/
-└── nightly/
-    ├── update.json
-    └── files/
-```
+| `v0.1.0` | Experimental | Core engine, GitHub provider, API provider |
+| `v0.2.0` | Early | New provider system, package manager |
+| `v0.5.0` | Pre-release | Rollback stable, migration system mature |
+| `v1.0.0` | Stable | Production ready, API frozen |
 
 ---
 
@@ -611,21 +566,7 @@ updatecore/
 | `$updater->getMigrationStatus()` | Get migration execution status |
 | `$updater->getRecentLogs(int $n)` | Get recent log entries |
 | `$updater->testConnection()` | Test remote connection |
-| `$updater->setChannel(string $c)` | Switch update channel |
 | `$updater->clearCache()` | Clear cached manifests |
-
----
-
-## Versioning
-
-UpdateCore follows [Semantic Versioning](https://semver.org/):
-
-| Version | Stage | Description |
-| :--- | :--- | :--- |
-| `v0.1.0` | Experimental | Core engine, GitHub provider, API provider |
-| `v0.2.0` | Early | New provider system, package manager |
-| `v0.5.0` | Pre-release | Rollback stable, migration system mature |
-| `v1.0.0` | Stable | Production ready, API frozen |
 
 ---
 
@@ -635,7 +576,6 @@ UpdateCore follows [Semantic Versioning](https://semver.org/):
 - [ ] Bitbucket provider
 - [ ] CLI command-line interface
 - [ ] Web dashboard with real-time progress
-- [ ] Signature verification enforcement
 - [ ] Differential patch updates
 - [ ] Webhook notifications on update events
 - [ ] Package dependency resolution

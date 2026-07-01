@@ -31,7 +31,6 @@ class ManifestParser
 
         $this->logger->info('Manifest parsed successfully', [
             'version' => $data['version'],
-            'channel' => $data['channel'] ?? 'stable',
             'files'   => count($data['files'] ?? []),
             'deleted' => count($data['deleted'] ?? []),
         ]);
@@ -56,11 +55,6 @@ class ManifestParser
     public function getVersion(): ?string
     {
         return $this->manifest['version'] ?? null;
-    }
-
-    public function getChannel(): ?string
-    {
-        return $this->manifest['channel'] ?? null;
     }
 
     public function getReleaseDate(): ?string
