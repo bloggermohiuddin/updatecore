@@ -128,45 +128,11 @@ Application starts
 
 ## Installation
 
-### Via Git Clone
+### Via Composer
 
 ```bash
-git clone https://github.com/bloggermohiuddin/updatecore.git
-cd updatecore
-composer install
+composer require bloggermohiuddin/updatecore
 ```
-
-### Manual Installation
-
-Clone or download the repository into your project:
-
-```bash
-git clone https://github.com/bloggermohiuddin/updatecore.git path/to/updatecore
-```
-
-Then add the PSR-4 autoload mapping to your `composer.json`:
-
-```json
-{
-    "autoload": {
-        "psr-4": {
-            "Updater\\": "path/to/updatecore/src/"
-        },
-        "files": [
-            "path/to/updatecore/src/Support/Helpers.php",
-            "path/to/updatecore/bootstrap.php"
-        ]
-    }
-}
-```
-
-Regenerate the autoloader:
-
-```bash
-composer dump-autoload
-```
-
-> **Packagist:** Coming soon. Once published, installation will be a single `composer require` command.
 
 ---
 
