@@ -134,6 +134,8 @@ Application starts
 composer require bloggermohiuddin/updatecore
 ```
 
+[![Packagist](https://img.shields.io/packagist/v/bloggermohiuddin/updatecore.svg?style=flat-square)](https://packagist.org/packages/bloggermohiuddin/updatecore)
+
 ---
 
 ## Quick Start
@@ -611,6 +613,19 @@ updatecore/
 | `$updater->testConnection()` | Test remote connection |
 | `$updater->setChannel(string $c)` | Switch update channel |
 | `$updater->clearCache()` | Clear cached manifests |
+
+---
+
+## Versioning
+
+UpdateCore follows [Semantic Versioning](https://semver.org/):
+
+| Version | Stage | Description |
+| :--- | :--- | :--- |
+| `v0.1.0` | Experimental | Core engine, GitHub provider, API provider |
+| `v0.2.0` | Early | New provider system, package manager |
+| `v0.5.0` | Pre-release | Rollback stable, migration system mature |
+| `v1.0.0` | Stable | Production ready, API frozen |
 
 ---
 
