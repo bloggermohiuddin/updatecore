@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-defined('UPDATER_ROOT') || define('UPDATER_ROOT', dirname(__DIR__));
+defined('UPDATER_ROOT') || define('UPDATER_ROOT', __DIR__);
 defined('UPDATER_STORAGE') || define('UPDATER_STORAGE', UPDATER_ROOT . '/storage');
 
 if (!is_dir(UPDATER_STORAGE)) {
