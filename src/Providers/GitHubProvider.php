@@ -21,51 +21,67 @@ class GitHubProvider
         $this->logger = $logger ?? new Logger($this->config);
     }
 
-    public function fetchManifest(): string
+    public function getLatestCommit(): array
     {
         $repo = $this->config->get('repository', '');
-        $token = $this->config->get('token', '');
+        $branch = $this->config->get('branch', 'main');
 
-        if ($repo === '') {
-            throw new \RuntimeException('GitHub repository not configured');
-        }
+        $this->requireRepo($repo);
 
-        $this->logger->info("Fetching manifest from GitHub", ['repo' => $repo]);
+        $url = "{$this->apiBase}/repos/{$repo}/commits/{$branch}";
 
-        $url = "{$this->apiBase}/repos/{$repo}/contents/update.json";
+        $response = $this->request($url);
+        $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
 
-        $headers = [
-            'http' => [
-                'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\nAccept: application/vnd.github.v3+json\r\n",
-                'timeout' => $this->config->get('timeout', 60),
-            ],
+        return [
+            'sha'        => $data['sha'] ?? '',
+            'short_hash' => substr($data['sha'] ?? '', 0, 7),
+            'message'    => $data['commit']['message'] ?? '',
+            'date'       => $data['commit']['committer']['date'] ?? '',
+            'author'     => $data['commit']['author']['name'] ?? '',
+            'url'        => $data['html_url'] ?? '',
         ];
+    }
 
-        if ($token !== '') {
-            $headers['http']['header'] .= "Authorization: Bearer {$token}\r\n";
-        }
+    public function getFileTree(): array
+    {
+        $repo = $this->config->get('repository', '');
+        $branch = $this->config->get('branch', 'main');
 
-        $context = stream_context_create($headers);
-        $response = @file_get_contents($url, false, $context);
+        $this->requireRepo($repo);
 
-        if ($response === false) {
-            $this->logger->error('Failed to fetch manifest from GitHub', ['url' => $url]);
-            throw new \RuntimeException("Failed to fetch manifest from GitHub: {$url}");
-        }
+        $url = "{$this->apiBase}/repos/{$repo}/git/trees/{$branch}?recursive=1";
 
-        $decoded = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
+        $response = $this->request($url);
+        $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
 
-        if (isset($decoded['content']) && isset($decoded['encoding'])) {
-            $content = base64_decode($decoded['content'], true);
-            if ($content === false) {
-                throw new \RuntimeException('Failed to decode GitHub base64 content');
+        $files = [];
+
+        foreach (($data['tree'] ?? []) as $item) {
+            if ($item['type'] !== 'blob') {
+                continue;
             }
-            $response = $content;
+
+            $path = $item['path'];
+
+            if ($this->shouldSkipPath($path)) {
+                continue;
+            }
+
+            $files[] = [
+                'path'  => $path,
+                'sha'   => $item['sha'],
+                'size'  => $item['size'] ?? 0,
+            ];
         }
 
-        $this->logger->info('Manifest fetched successfully from GitHub');
-        return is_string($response) ? $response : $response;
+        $this->logger->info("File tree fetched from GitHub", [
+            'repo'   => $repo,
+            'branch' => $branch,
+            'files'  => count($files),
+        ]);
+
+        return $files;
     }
 
     public function downloadFile(string $remotePath, string $localPath): bool
@@ -73,7 +89,9 @@ class GitHubProvider
         $repo = $this->config->get('repository', '');
         $token = $this->config->get('token', '');
 
-        $url = "{$this->apiBase}/repos/{$repo}/contents/files/{$remotePath}";
+        $this->requireRepo($repo);
+
+        $url = "{$this->apiBase}/repos/{$repo}/contents/{$remotePath}";
 
         $headers = [
             'http' => [
@@ -120,6 +138,8 @@ class GitHubProvider
         $repo = $this->config->get('repository', '');
         $token = $this->config->get('token', '');
 
+        $this->requireRepo($repo);
+
         $url = "{$this->apiBase}/repos/{$repo}/zipball/{$ref}";
 
         $headers = [
@@ -163,15 +183,26 @@ class GitHubProvider
         $repo = $this->config->get('repository', '');
         $url = "{$this->apiBase}/repos/{$repo}";
 
+        try {
+            $this->request($url, 10);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    private function request(string $url, ?int $timeout = null): string
+    {
+        $token = $this->config->get('token', '');
+
         $headers = [
             'http' => [
                 'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\n",
-                'timeout' => 10,
+                'header'  => "User-Agent: UpdaterFramework/1.0\r\nAccept: application/json\r\n",
+                'timeout' => $timeout ?? $this->config->get('timeout', 60),
             ],
         ];
 
-        $token = $this->config->get('token', '');
         if ($token !== '') {
             $headers['http']['header'] .= "Authorization: Bearer {$token}\r\n";
         }
@@ -179,6 +210,47 @@ class GitHubProvider
         $context = stream_context_create($headers);
         $response = @file_get_contents($url, false, $context);
 
-        return $response !== false;
+        if ($response === false) {
+            $this->logger->error('GitHub API request failed', ['url' => $url]);
+            throw new \RuntimeException("GitHub API request failed: {$url}");
+        }
+
+        return $response;
+    }
+
+    private function requireRepo(string $repo): void
+    {
+        if ($repo === '') {
+            throw new \RuntimeException('GitHub repository not configured');
+        }
+    }
+
+    private function shouldSkipPath(string $path): bool
+    {
+        $skipPatterns = [
+            '.git',
+            '.github',
+            '.gitignore',
+            'vendor/',
+            'node_modules/',
+            'storage/logs/',
+            'storage/cache/',
+            'storage/backups/',
+            'storage/migrations/',
+            '.env',
+            '.env.',
+            'composer.lock',
+            'README.md',
+            'LICENSE',
+            'CHANGELOG.md',
+        ];
+
+        foreach ($skipPatterns as $pattern) {
+            if (str_starts_with($path, $pattern) || str_contains($path, '/' . $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -7,19 +7,20 @@ namespace Updater\Core;
 use Updater\Support\Config;
 use Updater\Support\Logger;
 use Updater\Support\Cache;
+use Updater\Support\StateManager;
 use Updater\Managers\VersionManager;
 use Updater\Managers\BackupManager;
 use Updater\Managers\MigrationManager;
 use Updater\Managers\FileManager;
 use Updater\Providers\GitHubProvider;
 use Updater\Providers\ApiProvider;
-use Updater\Manifest\ManifestParser;
 
 class Updater
 {
     private Config $config;
     private Logger $logger;
     private Cache $cache;
+    private StateManager $state;
 
     private UpdateChecker $checker;
     private Installer $installer;
@@ -36,6 +37,7 @@ class Updater
         $this->config = Config::make($config);
         $this->logger = new Logger($this->config);
         $this->cache = new Cache($this->config);
+        $this->state = new StateManager($this->config);
 
         $this->checker = new UpdateChecker($this->config, $this->logger, $this->cache);
         $this->installer = new Installer($this->config, $this->logger);
@@ -93,12 +95,6 @@ class Updater
         }
     }
 
-    public function forceUpdate(string $version, ?callable $connectionFactory = null): bool
-    {
-        $this->logger->info("Force updating to version: {$version}");
-        return $this->update($connectionFactory);
-    }
-
     public function rollback(?callable $connectionFactory = null): bool
     {
         return $this->rollback->rollback(null, $connectionFactory);
@@ -134,29 +130,29 @@ class Updater
         return $this->installer->getProgress();
     }
 
+    public function getState(): StateManager
+    {
+        return $this->state;
+    }
+
     public function getLocalVersion(): string
     {
-        return $this->versionManager->getLocalVersion();
+        return $this->state->getVersion();
     }
 
     public function getVersionInfo(): array
     {
-        return $this->versionManager->getVersionInfo();
+        return $this->state->load();
     }
 
     public function getUpdateHistory(): array
     {
-        return $this->versionManager->getUpdateHistory();
+        return $this->state->getHistory();
     }
 
     public function getBackups(): array
     {
         return $this->backupManager->getBackups();
-    }
-
-    public function checkIntegrity(): array
-    {
-        return $this->checker->checkFileIntegrity();
     }
 
     public function getMigrationStatus(): array
@@ -247,12 +243,11 @@ class Updater
     public function getDashboardData(): array
     {
         return [
-            'local_version'  => $this->getLocalVersion(),
-            'version_info'   => $this->getVersionInfo(),
-            'update_history' => $this->getUpdateHistory(),
-            'backups'        => $this->getBackups(),
-            'migration_status' => $this->getMigrationStatus(),
-            'progress'       => $this->getProgress(),
+            'state'             => $this->state->load(),
+            'update_history'    => $this->state->getHistory(),
+            'backups'           => $this->getBackups(),
+            'migration_status'  => $this->getMigrationStatus(),
+            'progress'          => $this->getProgress(),
         ];
     }
 }

@@ -18,76 +18,68 @@ class ApiProvider
         $this->logger = $logger ?? new Logger($this->config);
     }
 
-    public function fetchManifest(): string
+    public function getLatestCommit(): array
     {
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
-        $apiToken = $this->config->get('api_token', '');
 
         if ($apiUrl === '') {
             throw new \RuntimeException('API URL not configured');
         }
 
-        $url = "{$apiUrl}/update.json";
+        $url = "{$apiUrl}/commit";
 
-        $this->logger->info("Fetching manifest from API", ['url' => $url]);
+        $response = $this->request($url);
+        $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
 
-        $headers = [
-            'http' => [
-                'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\nAccept: application/json\r\n",
-                'timeout' => $this->config->get('timeout', 60),
-            ],
+        return [
+            'sha'        => $data['sha'] ?? '',
+            'short_hash' => $data['short_hash'] ?? substr($data['sha'] ?? '', 0, 7),
+            'message'    => $data['message'] ?? '',
+            'date'       => $data['date'] ?? '',
+            'author'     => $data['author'] ?? '',
+            'url'        => $data['url'] ?? '',
         ];
+    }
 
-        if ($apiToken !== '') {
-            $headers['http']['header'] .= "Authorization: Bearer {$apiToken}\r\n";
+    public function getFileTree(): array
+    {
+        $apiUrl = rtrim($this->config->get('api_url', ''), '/');
+
+        if ($apiUrl === '') {
+            throw new \RuntimeException('API URL not configured');
         }
 
-        $context = stream_context_create($headers);
-        $response = @file_get_contents($url, false, $context);
+        $url = "{$apiUrl}/files";
 
-        if ($response === false) {
-            $error = error_get_last();
-            $this->logger->error('Failed to fetch manifest from API', [
-                'url'   => $url,
-                'error' => $error['message'] ?? 'Unknown error',
-            ]);
-            throw new \RuntimeException("Failed to fetch manifest from API: {$url}");
+        $response = $this->request($url);
+        $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
+
+        $files = [];
+
+        foreach (($data['files'] ?? []) as $item) {
+            $files[] = [
+                'path'  => $item['path'] ?? '',
+                'sha'   => $item['sha'] ?? $item['hash'] ?? '',
+                'size'  => $item['size'] ?? 0,
+            ];
         }
 
-        $decoded = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
+        $this->logger->info("File tree fetched from API", [
+            'files' => count($files),
+        ]);
 
-        if (!is_array($decoded)) {
-            throw new \RuntimeException('Invalid manifest response from API');
-        }
-
-        $this->logger->info('Manifest fetched successfully from API');
-        return json_encode($decoded, JSON_THROW_ON_ERROR);
+        return $files;
     }
 
     public function downloadFile(string $remotePath, string $localPath): bool
     {
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
-        $apiToken = $this->config->get('api_token', '');
 
         $url = "{$apiUrl}/files/{$remotePath}";
 
         $this->logger->info("Downloading file from API", ['path' => $remotePath]);
 
-        $headers = [
-            'http' => [
-                'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\n",
-                'timeout' => $this->config->get('timeout', 60),
-            ],
-        ];
-
-        if ($apiToken !== '') {
-            $headers['http']['header'] .= "Authorization: Bearer {$apiToken}\r\n";
-        }
-
-        $context = stream_context_create($headers);
-        $response = @file_get_contents($url, false, $context);
+        $response = $this->requestRaw($url);
 
         if ($response === false) {
             $this->logger->error("Failed to download file from API", ['path' => $remotePath]);
@@ -117,53 +109,41 @@ class ApiProvider
     public function fetchPackageManifest(string $packageName): string
     {
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
-        $apiToken = $this->config->get('api_token', '');
 
-        $url = "{$apiUrl}/packages/{$packageName}/update.json";
+        $url = "{$apiUrl}/packages/{$packageName}/commit";
 
-        $headers = [
-            'http' => [
-                'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\nAccept: application/json\r\n",
-                'timeout' => $this->config->get('timeout', 60),
-            ],
-        ];
+        return $this->request($url);
+    }
 
-        if ($apiToken !== '') {
-            $headers['http']['header'] .= "Authorization: Bearer {$apiToken}\r\n";
+    public function getPackageFileTree(string $packageName): array
+    {
+        $apiUrl = rtrim($this->config->get('api_url', ''), '/');
+
+        $url = "{$apiUrl}/packages/{$packageName}/files";
+
+        $response = $this->request($url);
+        $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
+
+        $files = [];
+
+        foreach (($data['files'] ?? []) as $item) {
+            $files[] = [
+                'path'  => $item['path'] ?? '',
+                'sha'   => $item['sha'] ?? $item['hash'] ?? '',
+                'size'  => $item['size'] ?? 0,
+            ];
         }
 
-        $context = stream_context_create($headers);
-        $response = @file_get_contents($url, false, $context);
-
-        if ($response === false) {
-            throw new \RuntimeException("Failed to fetch package manifest: {$packageName}");
-        }
-
-        return $response;
+        return $files;
     }
 
     public function downloadPackageFile(string $packageName, string $remotePath, string $localPath): bool
     {
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
-        $apiToken = $this->config->get('api_token', '');
 
         $url = "{$apiUrl}/packages/{$packageName}/files/{$remotePath}";
 
-        $headers = [
-            'http' => [
-                'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\n",
-                'timeout' => $this->config->get('timeout', 60),
-            ],
-        ];
-
-        if ($apiToken !== '') {
-            $headers['http']['header'] .= "Authorization: Bearer {$apiToken}\r\n";
-        }
-
-        $context = stream_context_create($headers);
-        $response = @file_get_contents($url, false, $context);
+        $response = $this->requestRaw($url);
 
         if ($response === false) {
             return false;
@@ -182,15 +162,26 @@ class ApiProvider
         $apiUrl = rtrim($this->config->get('api_url', ''), '/');
         $url = "{$apiUrl}/health";
 
+        try {
+            $this->request($url, 10);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    private function request(string $url, ?int $timeout = null): string
+    {
+        $apiToken = $this->config->get('api_token', '');
+
         $headers = [
             'http' => [
                 'method'  => 'GET',
-                'header'  => "User-Agent: UpdaterFramework/1.0\r\n",
-                'timeout' => 10,
+                'header'  => "User-Agent: UpdaterFramework/1.0\r\nAccept: application/json\r\n",
+                'timeout' => $timeout ?? $this->config->get('timeout', 60),
             ],
         ];
 
-        $apiToken = $this->config->get('api_token', '');
         if ($apiToken !== '') {
             $headers['http']['header'] .= "Authorization: Bearer {$apiToken}\r\n";
         }
@@ -198,6 +189,31 @@ class ApiProvider
         $context = stream_context_create($headers);
         $response = @file_get_contents($url, false, $context);
 
-        return $response !== false;
+        if ($response === false) {
+            $this->logger->error('API request failed', ['url' => $url]);
+            throw new \RuntimeException("API request failed: {$url}");
+        }
+
+        return $response;
+    }
+
+    private function requestRaw(string $url): string|false
+    {
+        $apiToken = $this->config->get('api_token', '');
+
+        $headers = [
+            'http' => [
+                'method'  => 'GET',
+                'header'  => "User-Agent: UpdaterFramework/1.0\r\n",
+                'timeout' => $this->config->get('timeout', 60),
+            ],
+        ];
+
+        if ($apiToken !== '') {
+            $headers['http']['header'] .= "Authorization: Bearer {$apiToken}\r\n";
+        }
+
+        $context = stream_context_create($headers);
+        return @file_get_contents($url, false, $context);
     }
 }

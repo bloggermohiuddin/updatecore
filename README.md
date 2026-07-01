@@ -33,94 +33,96 @@ detect, download, verify, and install updates from remote sources — automatica
 
 Keeping self-hosted applications up to date is one of the most overlooked challenges in PHP development. Manual updates are error-prone, risky, and time-consuming. **UpdateCore** solves this by providing a complete, reusable auto-update engine that integrates into any PHP project — regardless of framework, architecture, or hosting environment.
 
-UpdateCore uses a **manifest-based architecture**. Your remote server hosts a `update.json` manifest that describes the latest release: version, file hashes, deletions, and migrations. The framework compares local hashes against the remote manifest, downloads only the changed files, backs up the originals, replaces them safely, runs any necessary database migrations, and rolls back automatically if anything fails.
+UpdateCore uses a **manifest-free architecture**. No `update.json` to maintain. The framework reads your GitHub repository's file tree directly via the GitHub API, compares blob SHAs against local files, downloads only the changed files, backs up the originals, replaces them safely, and rolls back automatically if anything fails.
 
 Whether you are building a SaaS platform, a CMS, an admin panel, a CRM, or a REST API service, UpdateCore gives you production-grade update infrastructure in under 20 files.
 
 ---
 
-## Update Flow
+## How It Works
 
 ```text
-Application starts
-        │
-        ▼
-┌─────────────────┐
-│  Check Manifest  │──→ Fetch update.json from remote
-└────────┬────────┘
-         ▼
-┌─────────────────────┐
-│  Compare Local Hash │──→ Detect changed files
-└────────┬────────────┘
-         ▼
-┌────────────────────┐
-│ Download Files     │──→ Only changed files, zero waste
-└────────┬───────────┘
-         ▼
-┌────────────────────┐
-│  Verify SHA256     │──→ Hash validation before write
-└────────┬───────────┘
-         ▼
-┌────────────────────┐
-│  Create Backup     │──→ Snapshot originals
-└────────┬───────────┘
-         ▼
-┌────────────────────┐
-│  Replace Files     │──→ Atomic write with tmp file
-└────────┬───────────┘
-         ▼
-┌────────────────────┐
-│  Run Migrations    │──→ SQL / PHP migration files
-└────────┬───────────┘
-         ▼
-┌────────────────────┐
-│  Update Version    │──→ Write new version + history
-└────────┬───────────┘
-         ▼
-       Success
-         │
-         ▼ (on failure at any step)
-┌────────────────────┐
-│  Automatic Rollback│──→ Restore backup + previous version
-└────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                    Your PHP Application                   │
+│                                                          │
+│  require 'vendor/autoload.php';                          │
+│                                                          │
+│  $updater = Updater::make([                              │
+│      'provider'   => 'github',                           │
+│      'repository' => 'you/app',                          │
+│  ]);                                                     │
+│                                                          │
+│  $updater->update();                                     │
+└──────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│                  UpdateCore Engine                        │
+│                                                          │
+│  1. Fetch latest commit from GitHub                      │
+│  2. Compare with local last_check.json                   │
+│  3. Fetch file tree (blob SHAs)                          │
+│  4. Compare SHAs against local files                     │
+│  5. Download only changed files                          │
+│  6. Verify SHA integrity                                 │
+│  7. Backup originals                                     │
+│  8. Replace files atomically                             │
+│  9. Save state to last_check.json                        │
+│  10. Rollback automatically on failure                   │
+└──────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│              GitHub Repository (Remote Source)            │
+│                                                          │
+│  your-app/                                               │
+│  ├── src/                                                │
+│  ├── config/                                             │
+│  ├── public/                                             │
+│  └── ... (your project files)                            │
+│                                                          │
+│  No update.json needed.                                  │
+│  Just push your code.                                    │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Features
 
-- **Manifest-Based Updates** — Remote `update.json` defines version, files, deletions, and migrations
-- **Incremental File Downloads** — Only changed files are downloaded; zero unnecessary bandwidth
-- **SHA256 Integrity Verification** — Every file is hash-verified before writing to disk
+- **No Manifest Required** — Reads GitHub file tree directly, no `update.json` to maintain
+- **Git SHA Comparison** — Compares blob SHAs, same mechanism as Git itself
+- **Incremental Downloads** — Only changed files are downloaded; zero unnecessary bandwidth
+- **SHA256 Integrity Verification** — Every file is verified before writing to disk
 - **Automatic Rollback** — If any step fails, the system restores the previous state
-- **Backup System** — Full backup of affected files before any modification, with configurable retention
+- **Backup System** — Full backup of affected files before any modification
 - **Database Migrations** — Run SQL or PHP migration files as part of the update process
-- **GitHub Provider** — Pull manifests and files directly from GitHub repository releases
-- **Custom API Provider** — Connect to any REST API endpoint hosting your update artifacts
-- **Package Management** — Install, update, and remove modular packages and plugins
-- **Progress Tracking** — Real-time progress data for future web dashboards and CLI tools
-- **Structured Logging** — Every operation is logged with timestamps, levels, and context
-- **File-Level Caching** — Cached manifests reduce redundant remote requests
-- **Framework Independent** — Pure PHP 8.2+; no Laravel, Symfony, or CodeIgniter dependency
-- **PSR Compliant** — Follows PSR-4 autoloading and modern PHP coding standards
+- **GitHub Provider** — Direct integration with GitHub API
+- **Custom API Provider** — Connect to any REST API endpoint
+- **Local State Tracking** — `last_check.json` tracks commit, hash, timestamps, history
+- **Package Management** — Install, update, and remove modular packages
+- **Progress Tracking** — Real-time progress data for dashboards and CLI tools
+- **Structured Logging** — Every operation is logged with timestamps and context
+- **File-Level Caching** — Cached tree data reduces API calls
+- **Framework Independent** — Pure PHP 8.2+; works with Laravel, CodeIgniter, raw PHP, anything
+- **PSR Compliant** — PSR-4 autoloading, PSR-12 coding style
 
 ---
 
 ## Why UpdateCore?
 
-| Feature | UpdateCore | Manual Update | Custom Script |
+| Feature | UpdateCore | Manual Update | Git Pull |
 | :--- | :---: | :---: | :---: |
-| Manifest-based architecture | ✅ | ❌ | ⚠️ Partial |
-| Incremental file downloads | ✅ | ❌ | ⚠️ Partial |
-| SHA256 file verification | ✅ | ❌ | ⚠️ Partial |
+| No manifest maintenance | ✅ | ❌ | ✅ |
+| Incremental file downloads | ✅ | ❌ | ❌ |
+| SHA verification | ✅ | ❌ | ❌ |
 | Automatic rollback | ✅ | ❌ | ❌ |
-| Pre-update backups | ✅ | ❌ | ⚠️ Manual |
-| Database migrations | ✅ | ❌ | ⚠️ Manual |
-| Multiple providers | ✅ | ❌ | ❌ |
-| Package management | ✅ | ❌ | ❌ |
-| Progress tracking | ✅ | ❌ | ❌ |
+| Pre-update backups | ✅ | ❌ | ❌ |
+| Database migrations | ✅ | ❌ | ❌ |
+| State tracking | ✅ | ❌ | ❌ |
+| Works without SSH | ✅ | ❌ | ❌ |
 | Framework independent | ✅ | ✅ | ✅ |
-| No vendor lock-in | ✅ | ✅ | ✅ |
+| Safe atomic writes | ✅ | ❌ | ❌ |
 
 ---
 
@@ -138,7 +140,7 @@ composer require bloggermohiuddin/updatecore
 
 ## Quick Start
 
-### 1. Configure the Updater
+### 1. Configure
 
 ```php
 <?php
@@ -160,25 +162,20 @@ $updater = Updater::make([
 $result = $updater->check();
 
 if ($result['available']) {
-    echo "Update available: {$result['local']} → {$result['remote']}";
-    echo "Files to update: " . count($result['changed_files']);
-    echo "Download size: {$result['total_size_human']}";
+    echo "Update available!";
+    echo "From: {$result['commit']}";
+    echo "Files: " . count($result['changed_files']);
+    echo "Size: {$result['total_size_human']}";
 }
 ```
 
 ### 3. Install the Update
 
 ```php
-// Simple update (no database migrations)
 $success = $updater->update();
-
-// Update with database migrations
-$success = $updater->update(function () {
-    return new PDO('mysql:host=localhost;dbname=myapp', 'user', 'pass');
-});
 ```
 
-### 4. One-Liner Update
+### 4. One-Liner
 
 ```php
 Updater::make($config)->update();
@@ -188,322 +185,147 @@ Updater::make($config)->update();
 
 ## Configuration
 
-### Full Configuration Reference
-
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `provider` | `string` | `'github'` | Update source provider (`github` or `api`) |
-| `repository` | `string` | `''` | GitHub repository in `owner/repo` format |
-| `branch` | `string` | `'main'` | Branch or release tag to pull from |
-| `token` | `string` | `''` | GitHub personal access token for private repos |
+| `provider` | `string` | `'github'` | Update source (`github` or `api`) |
+| `repository` | `string` | `''` | GitHub repo in `owner/repo` format |
+| `branch` | `string` | `'main'` | Branch to pull from |
+| `token` | `string` | `''` | GitHub personal access token |
 | `api_url` | `string` | `''` | Base URL for custom API provider |
-| `api_token` | `string` | `''` | Authentication token for custom API |
-| `base_path` | `string` | auto-detected | Root path of the application being updated |
-| `storage_path` | `string` | auto-detected | Path for logs, backups, and cache |
-| `backup_enabled` | `bool` | `true` | Enable or disable automatic backups |
-| `backup_max` | `int` | `10` | Maximum number of backups to retain |
-| `timeout` | `int` | `60` | HTTP request timeout in seconds |
-
-### Environment-Specific Configuration
-
-```php
-// Production
-$updater = Updater::make([
-    'provider'       => 'github',
-    'repository'     => 'myorg/myapp',
-    'token'          => getenv('UPDATE_TOKEN'),
-    'backup_enabled' => true,
-]);
-
-// Development
-$updater = Updater::make([
-    'provider'       => 'github',
-    'repository'     => 'myorg/myapp',
-    'backup_enabled' => false,
-]);
-```
+| `api_token` | `string` | `''` | Authentication token for API |
+| `base_path` | `string` | auto | Root path of your application |
+| `storage_path` | `string` | auto | Path for logs, backups, cache |
+| `backup_enabled` | `bool` | `true` | Enable automatic backups |
+| `backup_max` | `int` | `10` | Maximum backups to retain |
+| `timeout` | `int` | `60` | HTTP timeout in seconds |
 
 ---
 
-## Update Manifest Format
+## Local State File
 
-The remote server hosts a single `update.json` file at the root.
-
-### Manifest Structure
+After each check or update, UpdateCore saves state to `storage/last_check.json`:
 
 ```json
 {
-    "version": "2.1.0",
-    "release_date": "2026-07-01",
-
-    "files": [
+    "commit": "8108b1ef4b2c9a3d...",
+    "short_hash": "8108b1e",
+    "version": "8108b1e",
+    "last_checked_at": "2026-07-01 12:00:00",
+    "last_updated_at": "2026-07-01 12:05:00",
+    "files_updated": 5,
+    "files": {},
+    "history": [
         {
-            "path": "app/User.php",
-            "hash": "a1b2c3d4e5f6...",
-            "size": 25120
-        },
-        {
-            "path": "config/database.php",
-            "hash": "f6e5d4c3b2a1...",
-            "size": 3100
+            "from": "cdbbf47...",
+            "to": "8108b1e...",
+            "short_hash": "8108b1e",
+            "files_count": 5,
+            "timestamp": "2026-07-01 12:05:00"
         }
-    ],
-
-    "deleted": [
-        "legacy/old_handler.php"
-    ],
-
-    "migrations": [
-        "migration_14.sql",
-        "migration_15_add_index.php"
     ]
 }
 ```
-
-### Field Reference
-
-| Field | Type | Required | Description |
-| :--- | :--- | :---: | :--- |
-| `version` | `string` | ✅ | Semantic version number (e.g., `2.1.0`) |
-| `release_date` | `string` | ❌ | ISO 8601 date of the release |
-| `files` | `array` | ✅ | Array of files included in this release |
-| `files[].path` | `string` | ✅ | Relative path to the file from project root |
-| `files[].hash` | `string` | ✅ | SHA256 hash of the file contents |
-| `files[].size` | `int` | ✅ | File size in bytes |
-| `deleted` | `array` | ❌ | Files to remove during update |
-| `migrations` | `array` | ❌ | Migration files to execute during update |
 
 ---
 
 ## Providers
 
-UpdateCore ships with two built-in providers.
-
 ### GitHub Provider
 
-Pulls manifests and files from a GitHub repository using the GitHub API.
+Uses GitHub API to fetch file tree and download files. No manifest needed.
 
 ```php
 $updater = Updater::make([
     'provider'   => 'github',
     'repository' => 'your-username/your-repo',
-    'token'      => 'ghp_xxxxxxxxxxxxxxxxxxxx',
+    'token'      => 'ghp_xxx',
 ]);
 ```
 
-**How it works:**
+**API endpoints used:**
 
-- Fetches `update.json` from `{repository}/contents/update.json`
-- Downloads individual files from `{repository}/contents/files/{path}`
-- Supports public and private repositories via token authentication
-
-**Remote file structure:**
-
-```
-your-repo/
-├── update.json
-└── files/
-    ├── app/
-    │   └── User.php
-    └── config/
-        └── database.php
-```
+| Endpoint | Purpose |
+| :--- | :--- |
+| `GET /repos/{repo}/commits/{branch}` | Get latest commit |
+| `GET /repos/{repo}/git/trees/{branch}?recursive=1` | Get file tree with blob SHAs |
+| `GET /repos/{repo}/contents/{path}` | Download individual file |
 
 ### Custom API Provider
 
-Connect to any REST API endpoint that serves update manifests and files.
+Connect to any REST API that serves file trees.
 
 ```php
 $updater = Updater::make([
     'provider'   => 'api',
     'api_url'    => 'https://updates.yourapp.com',
-    'api_token'  => 'your-api-token',
+    'api_token'  => 'your-token',
 ]);
 ```
 
-**Expected API endpoints:**
+**Expected endpoints:**
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/update.json` | GET | Fetch update manifest |
-| `/files/{path}` | GET | Download individual file |
-| `/packages/{name}/update.json` | GET | Fetch package manifest |
-| `/packages/{name}/files/{path}` | GET | Download package file |
-| `/health` | GET | Connection health check |
+| `/commit` | GET | Latest commit info |
+| `/files` | GET | File tree with SHAs |
+| `/files/{path}` | GET | Download file |
+| `/health` | GET | Connection test |
 
 ---
 
 ## Package Management
 
-UpdateCore includes a package manager for modular plugin and extension systems.
-
-### Install a Package
-
 ```php
 $updater->installPackage('bkash-payment');
-```
-
-### Update a Package
-
-```php
 $updater->updatePackage('sms-system');
-```
-
-### Remove a Package
-
-```php
 $updater->removePackage('old-plugin');
 ```
-
-> **Note:** Package management requires a compatible API server that serves package manifests and files at the expected endpoints.
 
 ---
 
 ## Rollback System
 
-UpdateCore implements a rollback mechanism that activates automatically on failure.
-
 ### Automatic Rollback
-
-When an update fails at any stage, the system automatically restores the previous state:
 
 ```php
 try {
     $updater->update();
 } catch (\Exception $e) {
-    // Rollback already executed automatically
-    echo "Update failed and was rolled back: " . $e->getMessage();
+    // Rollback executed automatically
 }
 ```
 
 ### Manual Rollback
 
-Roll back to the most recent backup:
-
 ```php
 $updater->rollback();
-```
-
-Roll back to a specific backup:
-
-```php
-$updater->rollbackTo('2026-07-01_10-30-00_abc123def');
-```
-
-Roll back to a specific version:
-
-```php
+$updater->rollbackTo('backup-id');
 $updater->rollbackToVersion('2.0.0');
-```
-
-### View Available Rollbacks
-
-```php
-$backups = $updater->getBackups();
-
-foreach ($backups as $backup) {
-    echo "Backup ID: {$backup['id']}";
-    echo "Created: {$backup['created_at']}";
-    echo "Files: " . count($backup['files']);
-}
 ```
 
 ---
 
 ## Security
 
-Security is a core design principle of UpdateCore. Every update operation includes multiple layers of protection.
-
-### SHA256 File Verification
-
-Every file in the manifest includes a SHA256 hash. UpdateCore verifies:
-
-1. **Pre-write verification** — Downloaded content is hashed and compared before writing
-2. **Post-write verification** — Written file is re-hashed to confirm integrity
-3. **Corrupted file rejection** — Files that fail verification are never written to disk
-
-### Safe File Replacement
-
-UpdateCore uses atomic file operations:
-
-1. New content is written to a temporary `.tmp` file
-2. The temporary file is verified
-3. The original file is replaced atomically
-4. Permissions are set to `0644`
-
-This prevents partial writes and corrupted states.
-
-### Integrity Checking
-
-```php
-$issues = $updater->checkIntegrity();
-
-if (!empty($issues)) {
-    foreach ($issues as $issue) {
-        echo "Path: {$issue['path']}\n";
-        echo "Reason: {$issue['reason']}\n";
-    }
-}
-```
+- **Git SHA Verification** — Uses same SHA mechanism as Git itself
+- **Atomic File Writes** — Temp file → verify → replace (no partial writes)
+- **Pre-write Validation** — Content verified before any file modification
+- **Backup Before Change** — Every file backed up before replacement
 
 ---
 
 ## Logging
 
-Every operation in UpdateCore is logged with timestamps, levels, and contextual data.
-
-### Log Location
-
-```
-storage/logs/updater-2026-07-01.log
-```
-
-### Log Levels
-
-| Level | Usage |
-| :--- | :--- |
-| `INFO` | Normal operations (checking, downloading, replacing) |
-| `SUCCESS` | Completed operations |
-| `WARNING` | Non-critical issues |
-| `ERROR` | Failed operations |
-| `DEBUG` | Detailed diagnostic information |
-
-### Example Log Output
+Logs stored in `storage/logs/`:
 
 ```
 [2026-07-01 10:30:00] [INFO] Checking for updates...
-[2026-07-01 10:30:01] [INFO] Local version: 2.0.0
-[2026-07-01 10:30:02] [INFO] Manifest fetched successfully from GitHub
-[2026-07-01 10:30:02] [INFO] Update available {"local":"2.0.0","remote":"2.1.0","changed":5}
-[2026-07-01 10:30:02] [INFO] Creating backup...
-[2026-07-01 10:30:02] [INFO] Backup created {"id":"2026-07-01_10-30-02_abc123","files":5}
+[2026-07-01 10:30:01] [INFO] Local state {"commit":"8108b1e","version":"0.0.0"}
+[2026-07-01 10:30:02] [INFO] File tree fetched from GitHub {"files":45}
+[2026-07-01 10:30:02] [INFO] File comparison complete {"changed":5,"deleted":1}
 [2026-07-01 10:30:03] [INFO] Downloading file {"path":"app/User.php","size":25120}
-[2026-07-01 10:30:03] [INFO] File written successfully {"path":"app/User.php","size":25120}
-[2026-07-01 10:30:04] [SUCCESS] Update installed successfully {"version":"2.1.0"}
+[2026-07-01 10:30:04] [SUCCESS] Update installed successfully {"commit":"a1b2c3d"}
 ```
-
-### Accessing Logs Programmatically
-
-```php
-$recentLogs = $updater->getRecentLogs(100);
-
-foreach ($recentLogs as $line) {
-    echo $line . "\n";
-}
-```
-
----
-
-## Versioning
-
-UpdateCore follows [Semantic Versioning](https://semver.org/):
-
-| Version | Stage | Description |
-| :--- | :--- | :--- |
-| `v0.1.0` | Experimental | Core engine, GitHub provider, API provider |
-| `v0.2.0` | Early | New provider system, package manager |
-| `v0.5.0` | Pre-release | Rollback stable, migration system mature |
-| `v1.0.0` | Stable | Production ready, API frozen |
 
 ---
 
@@ -516,57 +338,58 @@ updatecore/
 ├── src/
 │   ├── Core/
 │   │   ├── Updater.php              # Main entry point
-│   │   ├── UpdateChecker.php        # Remote update detection
-│   │   ├── Installer.php            # File download & installation
+│   │   ├── UpdateChecker.php        # Commit & tree comparison
+│   │   ├── Installer.php            # Download & install files
 │   │   └── Rollback.php             # Backup restoration
 │   ├── Providers/
-│   │   ├── GitHubProvider.php       # GitHub Releases API
-│   │   └── ApiProvider.php          # Custom REST API
+│   │   ├── GitHubProvider.php       # GitHub API integration
+│   │   └── ApiProvider.php          # Custom API integration
 │   ├── Managers/
-│   │   ├── VersionManager.php       # Semantic version tracking
-│   │   ├── FileManager.php          # File operations & verification
-│   │   ├── BackupManager.php        # Backup creation & restore
-│   │   └── MigrationManager.php     # Database migration runner
+│   │   ├── VersionManager.php       # Version tracking
+│   │   ├── FileManager.php          # File operations
+│   │   ├── BackupManager.php        # Backup management
+│   │   └── MigrationManager.php     # Database migrations
 │   ├── Manifest/
-│   │   └── ManifestParser.php       # update.json parser & validator
+│   │   └── ManifestParser.php       # Git SHA comparison engine
 │   └── Support/
-│       ├── Config.php               # Singleton configuration
-│       ├── Logger.php               # File-based logging
-│       ├── Cache.php                # File-based caching
+│       ├── Config.php               # Configuration
+│       ├── Logger.php               # Logging
+│       ├── Cache.php                # File caching
+│       ├── StateManager.php         # Local state (last_check.json)
 │       └── Helpers.php              # Utility functions
 └── storage/
+    ├── last_check.json              # Local state
     ├── logs/
     ├── backups/
-    ├── cache/
-    └── migrations/
+    └── cache/
 ```
 
 ---
 
-## API Reference
+## Works With Any PHP Project
 
-| Method | Description |
-| :--- | :--- |
-| `Updater::make(array $config)` | Create a new updater instance |
-| `$updater->check()` | Check for available updates |
-| `$updater->update()` | Execute the full update flow |
-| `$updater->rollback()` | Roll back to the most recent backup |
-| `$updater->rollbackTo(string $id)` | Roll back to a specific backup |
-| `$updater->rollbackToVersion(string $v)` | Roll back to a specific version |
-| `$updater->installPackage(string $name)` | Install a package |
-| `$updater->updatePackage(string $name)` | Update a package |
-| `$updater->removePackage(string $name)` | Remove a package |
-| `$updater->getProgress()` | Get current operation progress |
-| `$updater->getDashboardData()` | Get all data for web dashboard |
-| `$updater->getLocalVersion()` | Get current local version |
-| `$updater->getVersionInfo()` | Get detailed version information |
-| `$updater->getUpdateHistory()` | Get history of all updates |
-| `$updater->getBackups()` | List all available backups |
-| `$updater->checkIntegrity()` | Verify local file integrity |
-| `$updater->getMigrationStatus()` | Get migration execution status |
-| `$updater->getRecentLogs(int $n)` | Get recent log entries |
-| `$updater->testConnection()` | Test remote connection |
-| `$updater->clearCache()` | Clear cached manifests |
+| Project Type | Supported |
+| :--- | :---: |
+| Laravel | ✅ |
+| CodeIgniter | ✅ |
+| Raw PHP | ✅ |
+| WordPress (custom) | ✅ |
+| SaaS Applications | ✅ |
+| CRM Systems | ✅ |
+| Admin Panels | ✅ |
+| REST APIs | ✅ |
+| CMS Projects | ✅ |
+
+---
+
+## Versioning
+
+| Version | Stage | Description |
+| :--- | :--- | :--- |
+| `v0.1.0` | Experimental | Core engine, GitHub provider |
+| `v0.2.0` | Current | Tree-based updates, state tracking |
+| `v0.5.0` | Pre-release | Stable rollback, migration system |
+| `v1.0.0` | Stable | Production ready, API frozen |
 
 ---
 
@@ -577,21 +400,18 @@ updatecore/
 - [ ] CLI command-line interface
 - [ ] Web dashboard with real-time progress
 - [ ] Differential patch updates
-- [ ] Webhook notifications on update events
+- [ ] Webhook notifications
 - [ ] Package dependency resolution
-- [ ] Update scheduling and cron integration
-- [ ] Multi-language migration support
+- [ ] Cron integration
 
 ---
 
 ## Contributing
 
-Contributions are welcome. To contribute:
-
 1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
+2. **Create** a feature branch
+3. **Commit** your changes
+4. **Push** to the branch
 5. **Open** a Pull Request
 
 ### Code Standards
@@ -600,24 +420,13 @@ Contributions are welcome. To contribute:
 - PSR-4 autoloading
 - PSR-12 coding style
 - No framework dependencies
-- All methods must include type declarations
-- README must match code — never document unimplemented features
-
-### Reporting Issues
-
-Please use the [GitHub Issues](https://github.com/bloggermohiuddin/updatecore/issues) tracker. Include:
-
-- PHP version
-- OS/environment
-- Steps to reproduce
-- Expected vs actual behavior
-- Relevant log output
+- README must match code
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+MIT License. See [LICENSE](LICENSE).
 
 ---
 

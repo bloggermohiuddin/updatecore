@@ -6,12 +6,12 @@ namespace Updater\Core;
 
 use Updater\Support\Config;
 use Updater\Support\Logger;
+use Updater\Support\StateManager;
 use Updater\Providers\GitHubProvider;
 use Updater\Providers\ApiProvider;
 use Updater\Managers\FileManager;
 use Updater\Managers\BackupManager;
 use Updater\Managers\MigrationManager;
-use Updater\Manifest\ManifestParser;
 use function Updater\Support\updater_ensure_directory;
 use function Updater\Support\updater_timestamp;
 
@@ -19,6 +19,7 @@ class Installer
 {
     private Config $config;
     private Logger $logger;
+    private StateManager $state;
     private FileManager $fileManager;
     private BackupManager $backupManager;
     private MigrationManager $migrationManager;
@@ -39,6 +40,7 @@ class Installer
     ) {
         $this->config = $config ?? Config::make();
         $this->logger = $logger ?? new Logger($this->config);
+        $this->state = new StateManager($this->config);
         $this->fileManager = new FileManager($this->config, $this->logger);
         $this->backupManager = new BackupManager($this->config, $this->logger);
         $this->migrationManager = new MigrationManager($this->config, $this->logger);
@@ -58,12 +60,11 @@ class Installer
             $this->downloadFiles($checkResult);
             $this->deleteFiles($checkResult);
             $this->runMigrations($checkResult, $connectionFactory);
-
-            $this->updateLocalVersion($checkResult);
+            $this->saveState($checkResult);
 
             $this->setProgress('completed', 'Update completed successfully', 100);
             $this->logger->success("Update installed successfully", [
-                'version' => $checkResult['remote'],
+                'commit' => $checkResult['commit'],
             ]);
 
             return true;
@@ -83,37 +84,43 @@ class Installer
         try {
             $provider = $this->createProvider();
 
-            $manifestJson = $provider->fetchPackageManifest($packageName);
-            $manifestData = json_decode($manifestJson, true, 512, JSON_THROW_ON_ERROR);
+            if ($provider instanceof ApiProvider) {
+                $tree = $provider->getPackageFileTree($packageName);
+            } else {
+                throw new \RuntimeException("Package install only supported with API provider");
+            }
 
-            $parser = new ManifestParser($this->config, $this->logger);
-            $manifest = $parser->parse($manifestJson);
-
-            $totalFiles = count($manifest['files'] ?? []);
+            $totalFiles = count($tree);
             $current = 0;
 
-            foreach ($manifest['files'] ?? [] as $file) {
+            foreach ($tree as $file) {
                 $current++;
                 $percent = (int) (($current / max($totalFiles, 1)) * 100);
                 $this->setProgress('downloading_package', "Installing {$file['path']}", $percent, $totalFiles);
 
-                $tempContent = $this->fetchFileContent($provider, $packageName, $file['path']);
+                $tempDir = sys_get_temp_dir() . '/updater_pkg_' . uniqid('', true);
+                updater_ensure_directory($tempDir);
+                $tempFile = $tempDir . '/' . basename($file['path']);
 
-                if ($tempContent === null) {
+                $success = $provider->downloadPackageFile($packageName, $file['path'], $tempFile);
+
+                if (!$success || !file_exists($tempFile)) {
                     throw new \RuntimeException("Failed to download package file: {$file['path']}");
+                }
+
+                $content = file_get_contents($tempFile);
+                @unlink($tempFile);
+                @rmdir($tempDir);
+
+                if ($content === false) {
+                    throw new \RuntimeException("Failed to read package file: {$file['path']}");
                 }
 
                 $packageBasePath = "packages/{$packageName}";
 
-                if (!$this->fileManager->verifyDownloadedContent($tempContent, $file['hash'])) {
-                    throw new \RuntimeException("Integrity check failed for: {$file['path']}");
-                }
-
                 $written = $this->fileManager->writeFile(
                     $packageBasePath . '/' . $file['path'],
-                    $tempContent,
-                    true,
-                    $file['hash']
+                    $content
                 );
 
                 if (!$written) {
@@ -123,7 +130,7 @@ class Installer
                 $this->installedFiles[] = $packageBasePath . '/' . $file['path'];
             }
 
-            $this->runPackageMigrations($packageName, $manifest, $connectionFactory);
+            $this->runPackageMigrations($packageName, $connectionFactory);
 
             $this->setProgress('completed', "Package {$packageName} installed", 100);
             $this->logger->success("Package installed", ['package' => $packageName]);
@@ -237,15 +244,31 @@ class Installer
 
             $this->logger->info("Downloading file", ['path' => $file['path']]);
 
-            $content = $this->fetchFileContentFromProvider($provider, $file['path']);
+            $tempDir = sys_get_temp_dir() . '/updater_' . uniqid('', true);
+            updater_ensure_directory($tempDir);
+            $tempFile = $tempDir . '/' . basename($file['path']);
 
-            if ($content === null) {
+            $success = $provider->downloadFile($file['path'], $tempFile);
+
+            if (!$success || !file_exists($tempFile)) {
                 $this->logger->error("Failed to download file", ['path' => $file['path']]);
+                $failed[] = $file['path'];
+                @unlink($tempFile);
+                @rmdir($tempDir);
+                continue;
+            }
+
+            $content = file_get_contents($tempFile);
+            @unlink($tempFile);
+            @rmdir($tempDir);
+
+            if ($content === false) {
                 $failed[] = $file['path'];
                 continue;
             }
 
-            if (!$this->fileManager->verifyDownloadedContent($content, $file['hash'])) {
+            $parser = new \Updater\Manifest\ManifestParser($this->config, $this->logger);
+            if (!$parser->verifyDownloadedContent($content, $file['hash'], $file['size'] ?? 0)) {
                 $this->logger->error("File integrity check failed, skipping", ['path' => $file['path']]);
                 $failed[] = $file['path'];
                 continue;
@@ -253,9 +276,7 @@ class Installer
 
             $written = $this->fileManager->writeFile(
                 $file['path'],
-                $content,
-                true,
-                $file['hash']
+                $content
             );
 
             if (!$written) {
@@ -321,82 +342,32 @@ class Installer
         $this->setProgress('migrating', 'Migrations complete', 90);
     }
 
-    private function updateLocalVersion(array $checkResult): void
+    private function saveState(array $checkResult): void
     {
-        $this->setProgress('finalizing', 'Updating local version...', 95);
+        $this->setProgress('finalizing', 'Saving state...', 95);
 
-        $versionManager = new \Updater\Managers\VersionManager($this->config, $this->logger);
-
-        $versionManager->setLocalVersion($checkResult['remote'], [
-            'release_date' => $checkResult['release_date'] ?? null,
-            'files_updated'=> count($this->installedFiles),
+        $this->state->save([
+            'commit'          => $checkResult['commit_full'] ?? $checkResult['commit'] ?? '',
+            'short_hash'      => $checkResult['commit'] ?? '',
+            'version'         => $checkResult['commit'] ?? '0.0.0',
+            'last_updated_at' => updater_timestamp(),
+            'files_updated'   => count($this->installedFiles),
         ]);
 
-        $versionManager->addToHistory([
-            'from'         => $checkResult['local'],
-            'to'           => $checkResult['remote'],
-            'files_count'  => count($this->installedFiles),
+        $this->state->addHistory([
+            'from'        => $this->state->get('commit', ''),
+            'to'          => $checkResult['commit_full'] ?? '',
+            'short_hash'  => $checkResult['commit'] ?? '',
+            'files_count' => count($this->installedFiles),
         ]);
 
-        $this->setProgress('finalizing', 'Version updated', 98);
+        $this->setProgress('finalizing', 'State saved', 98);
     }
 
-    private function fetchFileContentFromProvider(GitHubProvider|ApiProvider $provider, string $path): ?string
+    private function runPackageMigrations(string $packageName, ?callable $connectionFactory = null): void
     {
-        $tempDir = sys_get_temp_dir() . '/updater_' . uniqid('', true);
-        updater_ensure_directory($tempDir);
-        $tempFile = $tempDir . '/' . basename($path);
-
-        $success = $provider->downloadFile($path, $tempFile);
-
-        if (!$success || !file_exists($tempFile)) {
-            return null;
-        }
-
-        $content = file_get_contents($tempFile);
-        @unlink($tempFile);
-        @rmdir($tempDir);
-
-        return $content;
-    }
-
-    private function fetchFileContent(GitHubProvider|ApiProvider $provider, string $packageName, string $path): ?string
-    {
-        if ($provider instanceof ApiProvider) {
-            $tempDir = sys_get_temp_dir() . '/updater_pkg_' . uniqid('', true);
-            updater_ensure_directory($tempDir);
-            $tempFile = $tempDir . '/' . basename($path);
-
-            $success = $provider->downloadPackageFile($packageName, $path, $tempFile);
-
-            if (!$success || !file_exists($tempFile)) {
-                return null;
-            }
-
-            $content = file_get_contents($tempFile);
-            @unlink($tempFile);
-            @rmdir($tempDir);
-
-            return $content;
-        }
-
-        return null;
-    }
-
-    private function runPackageMigrations(string $packageName, array $manifest, ?callable $connectionFactory = null): void
-    {
-        $migrations = $manifest['migrations'] ?? [];
-
-        if (empty($migrations) || $connectionFactory === null) {
+        if ($connectionFactory === null) {
             return;
-        }
-
-        foreach ($migrations as $migration) {
-            $migrationName = is_array($migration) ? ($migration['name'] ?? '') : $migration;
-            if ($migrationName === '') {
-                continue;
-            }
-            $this->migrationManager->markMigrationExecuted("pkg_{$packageName}_{$migrationName}");
         }
     }
 

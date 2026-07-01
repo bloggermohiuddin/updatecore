@@ -14,186 +14,165 @@ class ManifestParser
     private Config $config;
     private Logger $logger;
 
-    private ?array $manifest = null;
-
     public function __construct(?Config $config = null, ?Logger $logger = null)
     {
         $this->config = $config ?? Config::make();
         $this->logger = $logger ?? new Logger($this->config);
     }
 
-    public function parse(string $jsonContent): array
-    {
-        $data = json_decode($jsonContent, true, 512, JSON_THROW_ON_ERROR);
-
-        $this->validateManifest($data);
-        $this->manifest = $data;
-
-        $this->logger->info('Manifest parsed successfully', [
-            'version' => $data['version'],
-            'files'   => count($data['files'] ?? []),
-            'deleted' => count($data['deleted'] ?? []),
-        ]);
-
-        return $this->manifest;
-    }
-
-    public function parseFile(string $filePath): array
-    {
-        if (!file_exists($filePath)) {
-            throw new \RuntimeException("Manifest file not found: {$filePath}");
-        }
-
-        $content = file_get_contents($filePath);
-        if ($content === false) {
-            throw new \RuntimeException("Failed to read manifest file: {$filePath}");
-        }
-
-        return $this->parse($content);
-    }
-
-    public function getVersion(): ?string
-    {
-        return $this->manifest['version'] ?? null;
-    }
-
-    public function getReleaseDate(): ?string
-    {
-        return $this->manifest['release_date'] ?? null;
-    }
-
-    public function getFiles(): array
-    {
-        return $this->manifest['files'] ?? [];
-    }
-
-    public function getDeleted(): array
-    {
-        return $this->manifest['deleted'] ?? [];
-    }
-
-    public function getMigrations(): array
-    {
-        return $this->manifest['migrations'] ?? [];
-    }
-
-    public function getSignature(): ?string
-    {
-        return $this->manifest['signature'] ?? null;
-    }
-
-    public function getFileByPath(string $path): ?array
-    {
-        $path = updater_normalize_path($path);
-
-        foreach ($this->getFiles() as $file) {
-            if (updater_normalize_path($file['path']) === $path) {
-                return $file;
-            }
-        }
-
-        return null;
-    }
-
-    public function getChangedFiles(array $localHashes): array
+    public function compareFileTree(array $remoteTree, array $localHashes): array
     {
         $changed = [];
+        $deleted = [];
 
-        foreach ($this->getFiles() as $file) {
-            $remotePath = updater_normalize_path($file['path']);
-            $remoteHash = $file['hash'];
+        $remotePaths = [];
 
-            $localHash = $localHashes[$remotePath] ?? null;
+        foreach ($remoteTree as $remoteFile) {
+            $path = updater_normalize_path($remoteFile['path']);
+            $remotePaths[$path] = $remoteFile;
+            $remoteHash = $remoteFile['sha'];
+
+            $localHash = $localHashes[$path] ?? null;
 
             if ($localHash === null || $localHash !== $remoteHash) {
-                $changed[] = $file;
+                $changed[] = [
+                    'path' => $path,
+                    'hash' => $remoteHash,
+                    'size' => $remoteFile['size'] ?? 0,
+                    'type' => $localHash === null ? 'new' : 'modified',
+                ];
             }
         }
 
-        return $changed;
+        foreach ($localHashes as $localPath => $localHash) {
+            if (!isset($remotePaths[$localPath])) {
+                $deleted[] = $localPath;
+            }
+        }
+
+        $this->logger->info("File comparison complete", [
+            'changed' => count($changed),
+            'deleted' => count($deleted),
+            'unchanged' => count($remoteTree) - count($changed),
+        ]);
+
+        return [
+            'changed' => $changed,
+            'deleted' => $deleted,
+        ];
     }
 
-    public function buildFileHashes(string $basePath): array
+    public function getLocalHashes(string $basePath, array $remoteTree): array
     {
         $hashes = [];
 
-        foreach ($this->getFiles() as $file) {
-            $fullPath = $basePath . '/' . updater_normalize_path($file['path']);
+        foreach ($remoteTree as $remoteFile) {
+            $path = updater_normalize_path($remoteFile['path']);
+            $fullPath = $basePath . '/' . $path;
+
             if (file_exists($fullPath)) {
-                $hashes[updater_normalize_path($file['path'])] = updater_hash_file($fullPath);
+                $hashes[$path] = $this->getFileGitHash($fullPath);
             } else {
-                $hashes[updater_normalize_path($file['path'])] = null;
+                $hashes[$path] = null;
             }
         }
 
         return $hashes;
     }
 
-    public function verifyIntegrity(string $basePath): array
+    public function getFileGitHash(string $filePath): string
     {
-        $issues = [];
+        if (!file_exists($filePath)) {
+            return '';
+        }
 
-        foreach ($this->getFiles() as $file) {
-            $remotePath = updater_normalize_path($file['path']);
-            $fullPath = $basePath . '/' . $remotePath;
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            return '';
+        }
 
-            if (!file_exists($fullPath)) {
-                $issues[] = [
-                    'path'   => $remotePath,
-                    'reason' => 'file_missing',
-                ];
+        $size = filesize($filePath);
+        $header = "blob {$size}\0";
+        $store = $header . $content;
+
+        return sha1($store);
+    }
+
+    public function verifyFileIntegrity(string $localPath, string $expectedGitHash): bool
+    {
+        if (!file_exists($localPath)) {
+            return false;
+        }
+
+        $actualHash = $this->getFileGitHash($localPath);
+        return $actualHash === $expectedGitHash;
+    }
+
+    public function verifyDownloadedContent(string $content, string $expectedGitHash, int $size): bool
+    {
+        $header = "blob {$size}\0";
+        $store = $header . $content;
+        $actualHash = sha1($store);
+
+        return $actualHash === $expectedGitHash;
+    }
+
+    public function buildLocalTree(string $basePath, array $skipPatterns = []): array
+    {
+        $files = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($basePath, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        foreach ($iterator as $item) {
+            if (!$item->isFile()) {
                 continue;
             }
 
-            $currentHash = updater_hash_file($fullPath);
-            if ($currentHash !== $file['hash']) {
-                $issues[] = [
-                    'path'      => $remotePath,
-                    'reason'    => 'hash_mismatch',
-                    'expected'  => $file['hash'],
-                    'actual'    => $currentHash,
-                ];
+            $relativePath = str_replace($basePath . DIRECTORY_SEPARATOR, '', $item->getPathname());
+            $relativePath = updater_normalize_path($relativePath);
+
+            if ($this->shouldSkipPath($relativePath, $skipPatterns)) {
+                continue;
+            }
+
+            $files[] = [
+                'path' => $relativePath,
+                'sha'  => $this->getFileGitHash($item->getPathname()),
+                'size' => $item->getSize(),
+            ];
+        }
+
+        return $files;
+    }
+
+    private function shouldSkipPath(string $path, array $extraPatterns = []): bool
+    {
+        $defaultPatterns = [
+            '.git',
+            '.github',
+            '.gitignore',
+            'vendor/',
+            'node_modules/',
+            'storage/logs/',
+            'storage/cache/',
+            'storage/backups/',
+            'storage/migrations/',
+            '.env',
+            'composer.lock',
+            'README.md',
+            'LICENSE',
+        ];
+
+        $patterns = array_merge($defaultPatterns, $extraPatterns);
+
+        foreach ($patterns as $pattern) {
+            if (str_starts_with($path, $pattern) || str_contains($path, '/' . $pattern)) {
+                return true;
             }
         }
 
-        return $issues;
-    }
-
-    public function toArray(): ?array
-    {
-        return $this->manifest;
-    }
-
-    public function toJson(int $flags = JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR): ?string
-    {
-        if ($this->manifest === null) {
-            return null;
-        }
-
-        return json_encode($this->manifest, $flags);
-    }
-
-    private function validateManifest(array $data): void
-    {
-        if (!isset($data['version']) || !is_string($data['version'])) {
-            throw new \RuntimeException('Manifest missing or invalid "version" field');
-        }
-
-        if (!preg_match('/^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/', $data['version'])) {
-            throw new \RuntimeException("Invalid version format: {$data['version']}. Expected semver (e.g. 1.0.0)");
-        }
-
-        if (!isset($data['files']) || !is_array($data['files'])) {
-            throw new \RuntimeException('Manifest missing or invalid "files" array');
-        }
-
-        foreach ($data['files'] as $index => $file) {
-            if (!isset($file['path']) || !is_string($file['path'])) {
-                throw new \RuntimeException("Manifest file entry #{$index} missing or invalid 'path'");
-            }
-            if (!isset($file['hash']) || !is_string($file['hash'])) {
-                throw new \RuntimeException("Manifest file entry #{$index} missing or invalid 'hash'");
-            }
-        }
+        return false;
     }
 }

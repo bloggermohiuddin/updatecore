@@ -7,6 +7,7 @@ namespace Updater\Core;
 use Updater\Support\Config;
 use Updater\Support\Logger;
 use Updater\Support\Cache;
+use Updater\Support\StateManager;
 use Updater\Providers\GitHubProvider;
 use Updater\Providers\ApiProvider;
 use Updater\Manifest\ManifestParser;
@@ -19,11 +20,10 @@ class UpdateChecker
     private Config $config;
     private Logger $logger;
     private Cache $cache;
+    private StateManager $state;
     private VersionManager $versionManager;
     private FileManager $fileManager;
     private ManifestParser $manifestParser;
-
-    private ?array $remoteManifest = null;
 
     public function __construct(
         ?Config $config = null,
@@ -33,6 +33,7 @@ class UpdateChecker
         $this->config = $config ?? Config::make();
         $this->logger = $logger ?? new Logger($this->config);
         $this->cache = $cache ?? new Cache($this->config);
+        $this->state = new StateManager($this->config);
         $this->versionManager = new VersionManager($this->config, $this->logger, $this->cache);
         $this->fileManager = new FileManager($this->config, $this->logger);
         $this->manifestParser = new ManifestParser($this->config, $this->logger);
@@ -42,11 +43,16 @@ class UpdateChecker
     {
         $this->logger->info('Checking for updates...');
 
+        $localCommit = $this->state->getLastCommit();
         $localVersion = $this->versionManager->getLocalVersion();
-        $this->logger->info("Local version: {$localVersion}");
+
+        $this->logger->info("Local state", [
+            'commit'  => $localCommit ?: 'none',
+            'version' => $localVersion,
+        ]);
 
         try {
-            $remoteManifest = $this->fetchRemoteManifest();
+            $remoteCommit = $this->getRemoteCommit();
         } catch (\Exception $e) {
             $this->logger->error("Failed to check for updates", ['error' => $e->getMessage()]);
             return [
@@ -56,87 +62,101 @@ class UpdateChecker
             ];
         }
 
-        $remoteVersion = $remoteManifest['version'] ?? '0.0.0';
-        $this->versionManager->setRemoteVersion($remoteVersion);
+        $this->state->setLastCheckedAt();
 
-        $isAvailable = $this->versionManager->isUpdateAvailable($remoteVersion);
-
-        if (!$isAvailable) {
-            $this->logger->info("Application is up to date", [
-                'local'  => $localVersion,
-                'remote' => $remoteVersion,
+        if ($remoteCommit['sha'] === $localCommit && $localCommit !== '') {
+            $this->logger->info("Already up to date", [
+                'commit' => $remoteCommit['short_hash'],
             ]);
 
             return [
-                'available'    => false,
-                'local'        => $localVersion,
-                'remote'       => $remoteVersion,
-                'message'      => 'Application is up to date',
+                'available'  => false,
+                'local'      => $localVersion,
+                'commit'     => $remoteCommit['short_hash'],
+                'message'    => 'Already up to date',
             ];
         }
 
-        $localHashes = $this->fileManager->getLocalHashesFromManifest($remoteManifest['files'] ?? []);
-        $changedFiles = $this->manifestParser->parse(json_encode($remoteManifest, JSON_THROW_ON_ERROR))
-            ->getChangedFiles($localHashes);
+        $remoteTree = $this->getRemoteFileTree();
+        $localHashes = $this->manifestParser->getLocalHashes($this->config->getBasePath(), $remoteTree);
+        $comparison = $this->manifestParser->compareFileTree($remoteTree, $localHashes);
 
-        $deletedFiles = $remoteManifest['deleted'] ?? [];
-        $migrations = $remoteManifest['migrations'] ?? [];
+        $totalSize = 0;
+        foreach ($comparison['changed'] as $file) {
+            $totalSize += $file['size'] ?? 0;
+        }
 
-        $totalSize = $this->fileManager->calculateTotalSize($changedFiles);
+        $hasChanges = !empty($comparison['changed']) || !empty($comparison['deleted']);
+
+        if (!$hasChanges && $remoteCommit['sha'] === $localCommit) {
+            $this->logger->info("No changes detected");
+
+            return [
+                'available'  => false,
+                'local'      => $localVersion,
+                'commit'     => $remoteCommit['short_hash'],
+                'message'    => 'No changes detected',
+            ];
+        }
 
         $this->logger->info("Update available", [
-            'local'   => $localVersion,
-            'remote'  => $remoteVersion,
-            'changed' => count($changedFiles),
-            'deleted' => count($deletedFiles),
-            'size'    => updater_file_size_human($totalSize),
+            'from'     => $localCommit ?: 'initial',
+            'to'       => $remoteCommit['short_hash'],
+            'changed'  => count($comparison['changed']),
+            'deleted'  => count($comparison['deleted']),
+            'size'     => updater_file_size_human($totalSize),
         ]);
 
         return [
             'available'      => true,
             'local'          => $localVersion,
-            'remote'         => $remoteVersion,
-            'release_date'   => $remoteManifest['release_date'] ?? null,
-            'changed_files'  => $changedFiles,
-            'deleted_files'  => $deletedFiles,
-            'migrations'     => $migrations,
+            'commit'         => $remoteCommit['short_hash'],
+            'commit_full'    => $remoteCommit['sha'],
+            'commit_message' => $remoteCommit['message'],
+            'commit_date'    => $remoteCommit['date'],
+            'commit_author'  => $remoteCommit['author'],
+            'commit_url'     => $remoteCommit['url'],
+            'changed_files'  => $comparison['changed'],
+            'deleted_files'  => $comparison['deleted'],
             'total_size'     => $totalSize,
             'total_size_human' => updater_file_size_human($totalSize),
-            'manifest'       => $remoteManifest,
+            'remote_tree'    => $remoteTree,
         ];
     }
 
-    public function fetchRemoteManifest(): array
+    public function getRemoteCommit(): array
     {
-        $cached = $this->cache->get('remote_manifest');
+        $cached = $this->cache->get('remote_commit');
         if ($cached !== null) {
-            $this->logger->debug('Using cached remote manifest');
             return $cached;
         }
 
         $provider = $this->createProvider();
+        $commit = $provider->getLatestCommit();
 
-        $jsonContent = $provider->fetchManifest();
-        $manifest = $this->manifestParser->parse($jsonContent);
+        $this->cache->set('remote_commit', $commit, 300);
 
-        $this->cache->set('remote_manifest', $manifest, 300);
-        $this->remoteManifest = $manifest;
-
-        return $manifest;
+        return $commit;
     }
 
-    public function getRemoteManifest(): ?array
+    public function getRemoteFileTree(): array
     {
-        return $this->remoteManifest;
+        $cached = $this->cache->get('remote_tree');
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $provider = $this->createProvider();
+        $tree = $provider->getFileTree();
+
+        $this->cache->set('remote_tree', $tree, 300);
+
+        return $tree;
     }
 
-    public function checkFileIntegrity(): array
+    public function getState(): StateManager
     {
-        $manifest = $this->fetchRemoteManifest();
-        $parser = new ManifestParser($this->config, $this->logger);
-        $parser->parse(json_encode($manifest, JSON_THROW_ON_ERROR));
-
-        return $parser->verifyIntegrity($this->config->getBasePath());
+        return $this->state;
     }
 
     public function getVersionManager(): VersionManager
