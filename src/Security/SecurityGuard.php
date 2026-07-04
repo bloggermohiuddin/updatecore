@@ -15,37 +15,6 @@ class SecurityGuard
         $this->config = $config ?? Config::make();
     }
 
-    public function validateAdmin(): bool
-    {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-
-        if (isset($_SESSION['admin_id']) && $_SESSION['admin_id'] > 0) {
-            return true;
-        }
-
-        if (isset($_COOKIE['admin_token'])) {
-            $token = $_COOKIE['admin_token'];
-            if (!empty($token)) {
-                $db = $this->config->get('db');
-                if ($db instanceof \PDO) {
-                    try {
-                        $stmt = $db->prepare("SELECT id FROM admins WHERE remember_token = ? AND status = 'active' LIMIT 1");
-                        $stmt->execute([$token]);
-                        if ($stmt->fetch()) {
-                            return true;
-                        }
-                    } catch (\PDOException $e) {
-                        // fall through
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
     public function validateCsrf(?string $token = null): bool
     {
         if ($token === null) {
