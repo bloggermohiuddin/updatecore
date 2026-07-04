@@ -2,148 +2,202 @@
 
 declare(strict_types=1);
 
-namespace Updater\Support;
+namespace UpdateCore\Support;
 
 class Logger
 {
-    private string $logPath;
-    private ?string $currentFile = null;
-    private array $buffer = [];
-    private bool $enabled = true;
+    private string $logFile;
+    private ?\PDO $db;
+    private string $jobId;
+    private bool $dbLogging;
+    private Config $config;
 
-    public function __construct(?Config $config = null)
+    public function __construct(string $jobId, ?\PDO $db = null, ?Config $config = null, bool $dbLogging = true)
     {
-        $config = $config ?? Config::make();
-        $this->logPath = $config->getStoragePath('logs');
-        updater_ensure_directory($this->logPath);
-        $this->rotateIfNeeded();
-    }
+        $this->config = $config ?? Config::make();
+        $this->db = $db;
+        $this->jobId = $jobId;
+        $this->dbLogging = $dbLogging && $db !== null;
 
-    public function setEnabled(bool $enabled): self
-    {
-        $this->enabled = $enabled;
-        return $this;
-    }
-
-    public function log(string $level, string $message, array $context = []): self
-    {
-        if (!$this->enabled) {
-            return $this;
+        $logDir = $this->config->getLogPath();
+        if (!is_dir($logDir)) {
+            mkdir($logDir, 0755, true);
         }
-
-        $timestamp = updater_timestamp();
-        $contextStr = $context ? ' ' . json_encode($context, JSON_THROW_ON_ERROR) : '';
-        $line = "[{$timestamp}] [{$level}] {$message}{$contextStr}";
-
-        $this->buffer[] = $line;
-
-        if (count($this->buffer) >= 50) {
-            $this->flush();
-        }
-
-        return $this;
+        $this->logFile = $logDir . '/update-' . date('Y-m-d') . '.log';
     }
 
-    public function info(string $message, array $context = []): self
+    public function log(string $message, string $level = 'info', ?string $step = null): void
     {
-        return $this->log('INFO', $message, $context);
-    }
+        $timestamp = date('Y-m-d H:i:s');
+        $logEntry = "[{$timestamp}] [{$level}] [{$this->jobId}] {$message}";
 
-    public function warning(string $message, array $context = []): self
-    {
-        return $this->log('WARNING', $message, $context);
-    }
+        file_put_contents($this->logFile, $logEntry . PHP_EOL, FILE_APPEND | LOCK_EX);
 
-    public function error(string $message, array $context = []): self
-    {
-        return $this->log('ERROR', $message, $context);
-    }
-
-    public function debug(string $message, array $context = []): self
-    {
-        return $this->log('DEBUG', $message, $context);
-    }
-
-    public function success(string $message, array $context = []): self
-    {
-        return $this->log('SUCCESS', $message, $context);
-    }
-
-    public function flush(): void
-    {
-        if (empty($this->buffer)) {
-            return;
-        }
-
-        $file = $this->getLogFile();
-        $content = implode(PHP_EOL, $this->buffer) . PHP_EOL;
-
-        file_put_contents($file, $content, FILE_APPEND | LOCK_EX);
-        $this->buffer = [];
-    }
-
-    public function getRecentLogs(int $lines = 50): array
-    {
-        $file = $this->getLogFile();
-        if (!file_exists($file)) {
-            return [];
-        }
-
-        $content = file_get_contents($file);
-        if ($content === false) {
-            return [];
-        }
-
-        $allLines = array_filter(explode(PHP_EOL, trim($content)));
-        return array_slice($allLines, -$lines);
-    }
-
-    public function getLogFiles(): array
-    {
-        $files = glob($this->logPath . '/updater-*.log');
-        if ($files === false) {
-            return [];
-        }
-
-        rsort($files);
-        return $files;
-    }
-
-    public function clearLogs(): self
-    {
-        $files = $this->getLogFiles();
-        foreach ($files as $file) {
-            unlink($file);
-        }
-        return $this;
-    }
-
-    private function getLogFile(): string
-    {
-        if ($this->currentFile !== null && file_exists($this->currentFile)) {
-            return $this->currentFile;
-        }
-
-        $date = date('Y-m-d');
-        $this->currentFile = $this->logPath . '/updater-' . $date . '.log';
-        return $this->currentFile;
-    }
-
-    private function rotateIfNeeded(): void
-    {
-        $files = $this->getLogFiles();
-        $maxFiles = 30;
-
-        if (count($files) > $maxFiles) {
-            $toDelete = array_slice($files, $maxFiles);
-            foreach ($toDelete as $file) {
-                unlink($file);
+        if ($this->dbLogging && $this->db !== null) {
+            try {
+                $this->ensureLogTable();
+                $stmt = $this->db->prepare("INSERT INTO update_logs (job_id, level, message, step, created_at) VALUES (?, ?, ?, ?, NOW())");
+                $stmt->execute([$this->jobId, $level, $message, $step]);
+            } catch (\PDOException $e) {
+                error_log("UpdateCore DB logging failed: " . $e->getMessage());
             }
         }
     }
 
-    public function __destruct()
+    public function info(string $message, ?string $step = null): void
     {
-        $this->flush();
+        $this->log($message, 'info', $step);
+    }
+
+    public function warning(string $message, ?string $step = null): void
+    {
+        $this->log($message, 'warning', $step);
+    }
+
+    public function error(string $message, ?string $step = null): void
+    {
+        $this->log($message, 'error', $step);
+    }
+
+    public function success(string $message, ?string $step = null): void
+    {
+        $this->log($message, 'success', $step);
+    }
+
+    public function debug(string $message, ?string $step = null): void
+    {
+        $this->log($message, 'debug', $step);
+    }
+
+    public function getJobLogs(int $limit = 100): array
+    {
+        if (!$this->dbLogging || $this->db === null) {
+            return [];
+        }
+        try {
+            $stmt = $this->db->prepare("SELECT * FROM update_logs WHERE job_id = ? ORDER BY created_at DESC LIMIT ?");
+            $stmt->execute([$this->jobId, $limit]);
+            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        } catch (\PDOException $e) {
+            return [];
+        }
+    }
+
+    public function cleanOldLogs(int $keepDays = 30): int
+    {
+        $deleted = 0;
+
+        if ($this->dbLogging && $this->db !== null) {
+            try {
+                $stmt = $this->db->prepare("DELETE FROM update_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)");
+                $stmt->execute([$keepDays]);
+                $deleted += $stmt->rowCount();
+            } catch (\PDOException $e) {
+                // silent
+            }
+        }
+
+        $logDir = $this->config->getLogPath();
+        if (is_dir($logDir)) {
+            $files = glob($logDir . '/update-*.log');
+            $threshold = strtotime("-{$keepDays} days");
+            foreach ($files as $file) {
+                if (filemtime($file) < $threshold) {
+                    if (unlink($file)) {
+                        $deleted++;
+                    }
+                }
+            }
+        }
+
+        return $deleted;
+    }
+
+    public function cleanAllLogs(): int
+    {
+        $deleted = 0;
+
+        if ($this->dbLogging && $this->db !== null) {
+            try {
+                $stmt = $this->db->query("DELETE FROM update_logs");
+                $deleted += $stmt->rowCount();
+            } catch (\PDOException $e) {
+                // silent
+            }
+        }
+
+        $logDir = $this->config->getLogPath();
+        if (is_dir($logDir)) {
+            $files = glob($logDir . '/update-*.log');
+            foreach ($files as $file) {
+                if (unlink($file)) {
+                    $deleted++;
+                }
+            }
+        }
+
+        $statusDir = $this->config->getStatusPath();
+        if (is_dir($statusDir)) {
+            $files = glob($statusDir . '/*.json');
+            foreach ($files as $file) {
+                if (unlink($file)) {
+                    $deleted++;
+                }
+            }
+        }
+
+        return $deleted;
+    }
+
+    public function getStats(): array
+    {
+        if (!$this->dbLogging || $this->db === null) {
+            return ['total_logs' => 0, 'by_job' => [], 'by_date' => [], 'oldest_log' => null];
+        }
+
+        try {
+            $stats = [];
+            $stmt = $this->db->query("SELECT COUNT(*) as total FROM update_logs");
+            $stats['total_logs'] = $stmt->fetchColumn();
+
+            $stmt = $this->db->query("SELECT job_id, COUNT(*) as count FROM update_logs GROUP BY job_id ORDER BY count DESC LIMIT 10");
+            $stats['by_job'] = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            $stmt = $this->db->query("SELECT DATE(created_at) as date, COUNT(*) as count FROM update_logs GROUP BY DATE(created_at) ORDER BY date DESC LIMIT 30");
+            $stats['by_date'] = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            $stmt = $this->db->query("SELECT MIN(created_at) as oldest FROM update_logs");
+            $stats['oldest_log'] = $stmt->fetchColumn();
+
+            return $stats;
+        } catch (\PDOException $e) {
+            return ['error' => $e->getMessage()];
+        }
+    }
+
+    private function ensureLogTable(): void
+    {
+        static $ensured = false;
+        if ($ensured || $this->db === null) {
+            return;
+        }
+
+        $sql = "CREATE TABLE IF NOT EXISTS update_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id VARCHAR(64) NOT NULL,
+            level VARCHAR(20) NOT NULL DEFAULT 'info',
+            message TEXT NOT NULL,
+            step VARCHAR(50) NULL,
+            created_at DATETIME NOT NULL,
+            INDEX idx_job_id (job_id),
+            INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        try {
+            $this->db->exec($sql);
+            $ensured = true;
+        } catch (\PDOException $e) {
+            // silent
+        }
     }
 }

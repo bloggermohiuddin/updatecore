@@ -1,26 +1,38 @@
 {
     "name": "bloggermohiuddin/updatecore",
-    "description": "Lightweight, production-grade reusable PHP update framework",
+    "description": "Framework-agnostic PHP auto-update engine for self-hosted applications",
     "type": "library",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "MD Mohiuddin",
+            "email": "developer@bloggermohiuddin.com"
+        }
+    ],
+    "minimum-stability": "stable",
     "require": {
-        "php": ">=8.2"
+        "php": ">=8.0",
+        "ext-curl": "*"
     },
     "autoload": {
         "psr-4": {
-            "Updater\\": "src/"
-        },
-        "files": [
-            "src/Support/Helpers.php",
-            "bootstrap.php"
-        ]
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Updater\\Tests\\": "tests/"
+            "UpdateCore\\": "src/"
         }
     },
     "config": {
         "sort-packages": true
+    },
+    "keywords": [
+        "update",
+        "updater",
+        "auto-update",
+        "github",
+        "deployment",
+        "php",
+        "framework-agnostic"
+    ],
+    "support": {
+        "issues": "https://github.com/bloggermohiuddin/updatecore/issues",
+        "source": "https://github.com/bloggermohiuddin/updatecore"
     }
 }
