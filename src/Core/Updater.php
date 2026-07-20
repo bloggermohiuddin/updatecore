@@ -51,7 +51,7 @@ class Updater
             $current = $this->getVersion();
             $latest = $this->github->getLatestCommit();
 
-            $isUpdateAvailable = !str_starts_with($latest['sha'], $current['commit']);
+            $isUpdateAvailable = $latest['sha'] !== $current['commit'];
 
             return [
                 'success'          => true,
