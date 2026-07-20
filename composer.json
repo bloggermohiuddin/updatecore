@@ -6,7 +6,9 @@
     "authors": [
         {
             "name": "MD Mohiuddin",
-            "email": "developer@bloggermohiuddin.com"
+            "email": "bloggermahim@gmail.com",
+            "homepage": "https://mohiuddinmahim.mojumderit.com",
+            "role": "Developer"
         }
     ],
     "minimum-stability": "stable",
@@ -33,6 +35,7 @@
     ],
     "support": {
         "issues": "https://github.com/bloggermohiuddin/updatecore/issues",
-        "source": "https://github.com/bloggermohiuddin/updatecore"
+        "source": "https://github.com/bloggermohiuddin/updatecore",
+        "homepage": "https://mohiuddinmahim.mojumderit.com"
     }
 }
