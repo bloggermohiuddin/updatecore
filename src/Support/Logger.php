@@ -75,8 +75,9 @@ class Logger
             return [];
         }
         try {
-            $stmt = $this->db->prepare("SELECT * FROM update_logs WHERE job_id = ? ORDER BY created_at DESC LIMIT ?");
-            $stmt->execute([$this->jobId, $limit]);
+            $limit = max(1, min(1000, $limit));
+            $stmt = $this->db->prepare("SELECT * FROM update_logs WHERE job_id = ? ORDER BY created_at DESC LIMIT {$limit}");
+            $stmt->execute([$this->jobId]);
             return $stmt->fetchAll(\PDO::FETCH_ASSOC);
         } catch (\PDOException $e) {
             return [];

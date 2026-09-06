@@ -46,6 +46,29 @@ class SecurityGuard
         return bin2hex(random_bytes(32));
     }
 
+    public function validateAdmin(): bool
+    {
+        $secretKey = (string) ($this->config->get('secret_key', '') ?? '');
+        if ($secretKey !== '') {
+            $provided = $_SERVER['HTTP_X_UPDATE_SECRET'] ?? $_POST['update_secret'] ?? '';
+            if (!is_string($provided) || $provided === '' || !hash_equals($secretKey, $provided)) {
+                $this->logSecurityEvent('admin_auth_failed', ['reason' => 'secret_mismatch']);
+                return false;
+            }
+        }
+
+        $allowedIps = $this->config->get('allowed_ips', []);
+        if (!empty($allowedIps)) {
+            $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+            if (!in_array($ip, (array) $allowedIps, true)) {
+                $this->logSecurityEvent('admin_auth_failed', ['reason' => 'ip_denied', 'ip' => $ip]);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public function logSecurityEvent(string $event, array $context = []): void
     {
         $data = [
