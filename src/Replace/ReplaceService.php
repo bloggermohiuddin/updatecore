@@ -93,6 +93,7 @@ class ReplaceService
     public function deleteRemovedFiles(array $removedFiles): array
     {
         $results = ['deleted' => [], 'skipped' => [], 'failed' => []];
+        $parentDirs = [];
 
         foreach ($removedFiles as $file) {
             $filePath = is_array($file) ? ($file['path'] ?? '') : $file;
@@ -109,9 +110,15 @@ class ReplaceService
                 continue;
             }
 
-            $deleted = is_dir($targetPath)
-                ? Helpers::recursiveDelete($targetPath)
-                : unlink($targetPath);
+            if (is_dir($targetPath)) {
+                $deleted = Helpers::recursiveDelete($targetPath);
+            } else {
+                $parentDir = dirname($filePath);
+                if ($parentDir !== '.' && $parentDir !== '') {
+                    $parentDirs[] = $parentDir;
+                }
+                $deleted = unlink($targetPath);
+            }
 
             if ($deleted) {
                 $results['deleted'][] = $filePath;
@@ -122,7 +129,57 @@ class ReplaceService
             }
         }
 
+        $this->cleanupEmptyDirs($parentDirs);
+
         return $results;
+    }
+
+    private function cleanupEmptyDirs(array $dirs): void
+    {
+        $uniqueDirs = array_values(array_unique($dirs));
+        usort($uniqueDirs, function (string $a, string $b) {
+            return substr_count($b, '/') - substr_count($a, '/');
+        });
+
+        foreach ($uniqueDirs as $dir) {
+            $this->removeDirAndAncestors($dir);
+        }
+    }
+
+    private function removeDirAndAncestors(string $dir): void
+    {
+        $projectRoot = $this->config->getProjectRoot();
+        $current = $dir;
+
+        while ($current !== '.' && $current !== '' && $current !== '/') {
+            if ($this->config->isExcluded($current) || $this->config->isPreserved($current)) {
+                break;
+            }
+
+            $fullPath = $projectRoot . '/' . $current;
+
+            if (!is_dir($fullPath)) {
+                break;
+            }
+
+            $contents = array_diff(scandir($fullPath), ['.', '..']);
+            if (!empty($contents)) {
+                break;
+            }
+
+            if (rmdir($fullPath)) {
+                $this->logger->info("Removed empty directory: {$current}", 'delete');
+            } else {
+                $this->logger->warning("Failed to remove directory: {$current}", 'delete');
+                break;
+            }
+
+            $parent = dirname($current);
+            if ($parent === $current) {
+                break;
+            }
+            $current = $parent;
+        }
     }
 
     public function verifyIntegrity(array $files): bool
